@@ -29,6 +29,7 @@ fn section0_xml(hwpx: &[u8]) -> String {
 fn document_with_memo_field() -> Document {
     let mut doc = Document::default();
     doc.doc_info.char_shapes = vec![Default::default()];
+    doc.doc_info.para_shapes = vec![Default::default()];
     let para = Paragraph {
         text: "메모 대상".to_string(),
         char_shapes: vec![CharShapeRef {

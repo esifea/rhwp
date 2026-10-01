@@ -15,7 +15,8 @@ use crate::model::bin_data::{BinData, BinDataType, MAX_BIN_DATA_BYTES};
 use crate::model::document::{Document, Preview};
 use crate::password_crypto::{encrypt_hwp5_stream, HWP5_ENCRYPT_VERSION};
 
-use super::body_text::serialize_section_for_version;
+use super::body_text::{collect_memo_lists, serialize_section_for_version};
+
 use super::content_loss::{
     ContentLoss, ContentLossReason, ContentLossReport, SerializedDocument, SerializedFormat,
 };
@@ -124,7 +125,21 @@ fn serialize_hwp_inner(
     let split_multi_sec_pr = doc.layout_profile().hwpx_stored_layout();
     let mut section_bytes_list = Vec::new();
     let mut form_id_allocator = None;
-    for section in &doc.sections {
+    // Get all memo from current docs
+    let memo_lists: Vec<_> = doc.sections.iter().flat_map(collect_memo_lists).collect();
+    // Check whether original docs include memo or not so stale raw memo tail cannot revive
+    let retained_memo_tail = doc.sections.iter().any(|section| {
+        section.raw_stream.as_deref().is_some_and(|raw| {
+            crate::parser::record::Record::read_all(raw).is_ok_and(|records| {
+                records.iter().any(|record| record.tag_id == crate::parser::tags::HWPTAG_MEMO_LIST)
+            })
+        })
+    });
+    // Check if memo exists and is modified
+    let rebuild_memo_tail = (!memo_lists.is_empty() || retained_memo_tail)
+                            && doc.sections.iter().any(|section| !section.raw_provenance_permits_reuse());
+
+    for (section_index, section) in doc.sections.iter().enumerate() {
         let split_starts: Vec<usize> =
             if !split_multi_sec_pr || section.raw_provenance_permits_reuse() {
                 Vec::new()
@@ -143,9 +158,21 @@ fn serialize_hwp_inner(
                     .collect()
             };
         if split_starts.is_empty() {
-            let prepared =
-                super::form_identity::prepare_section(section, doc, &mut form_id_allocator)?;
-            section_bytes_list.push(serialize_section_for_version(&prepared, output_version));
+            let prepared = super::form_identity::prepare_section(section, doc, &mut form_id_allocator)?;
+            // Add memo tail only at final section
+            let memos = rebuild_memo_tail.then(|| {
+                if section_index + 1 == doc.sections.len() {
+                    memo_lists.as_slice()
+                } else {
+                    &[]
+                }
+            });
+            section_bytes_list.push(serialize_section_for_version(
+                &prepared,
+                output_version,
+                memos,
+            ));
+
             continue;
         }
         let mut starts = Vec::with_capacity(split_starts.len() + 1);
@@ -174,7 +201,19 @@ fn serialize_hwp_inner(
             };
             let prepared =
                 super::form_identity::prepare_section(&sub, doc, &mut form_id_allocator)?;
-            section_bytes_list.push(serialize_section_for_version(&prepared, output_version));
+            // Add memo tail only to the last split of the final section
+            let memos = rebuild_memo_tail.then(|| {
+                if section_index + 1 == doc.sections.len() && k + 1 == starts.len() {
+                    memo_lists.as_slice()
+                } else {
+                    &[]
+                }
+            });
+            section_bytes_list.push(serialize_section_for_version(
+                &prepared,
+                output_version,
+                memos,
+            ));
         }
     }
 
