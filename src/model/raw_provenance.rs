@@ -456,9 +456,12 @@ impl crate::model::document::Document {
             .iter()
             .any(|s| s.trailing_lists.is_some())
             .then(|| crate::model::section_tail::projection_digest(self));
+        let master_digest =
+            tail_digest.map(|_| crate::model::section_tail::master_projection_digest(self));
         for section in &mut self.sections {
             if let Some(tail) = &mut section.trailing_lists {
                 tail.projection_seal = tail_digest;
+                tail.master_projection_seal = master_digest;
             }
         }
     }

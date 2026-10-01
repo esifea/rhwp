@@ -3356,25 +3356,14 @@ where
         Control::Field(f) => {
             // fieldBegin은 <hp:ctrl>...</hp:ctrl>로 감싸야 함 (Table/Picture와 달리)
             storage.push_str(out, "<hp:ctrl>").map_err(xml_error)?;
-            // [#5866] HWP5 출처 메모(command `MEMO/…`)는 한글 실측 형상(파라미터
-            // 6종 + 빈 subList)으로 방출한다 — CROSSREF 로 굳히면 필드 범위
-            // 숨김이 풀려 메모 대상 텍스트가 본문에 붙는다.
-            if let Some(memo_children) = super::field::memo_field_children_xml(f) {
-                storage
-                    .push_str(out, &super::field::field_begin_open_tag(f))
-                    .map_err(xml_error)?;
-                storage.push_char(out, '>').map_err(xml_error)?;
-                storage.push_str(out, &memo_children).map_err(xml_error)?;
-                storage
-                    .push_str(out, "</hp:fieldBegin>")
-                    .map_err(xml_error)?;
-                storage.push_str(out, "</hp:ctrl>").map_err(xml_error)?;
-                return Ok(());
-            }
-            let generated_params = generated_field_parameters(f);
+            // Native memo parameters and body share the regular field writer.
+            let native_memo_params = super::field::memo_field_parameters_xml(f);
+            let generated_params = native_memo_params
+                .clone()
+                .or_else(|| generated_field_parameters(f));
             let has_params = f.raw_parameters_xml.is_some() || generated_params.is_some();
-            let has_memo = f.field_type == crate::model::control::FieldType::Memo
-                && !f.memo_paragraphs.is_empty();
+            let has_memo =
+                f.is_memo() && (!f.memo_paragraphs.is_empty() || native_memo_params.is_some());
             if has_params || has_memo {
                 // [#1391] 자식(parameters / memo subList)이 있으면 start/end 태그.
                 storage
@@ -3399,7 +3388,15 @@ where
                         )
                         .map_err(xml_error)?;
                     let mut vert_cursor: u32 = 0;
-                    for para in &f.memo_paragraphs {
+                    // Command-only native memo still requires a closed empty subList
+                    let empty_memo = Paragraph::new_empty();
+                    let memo_paragraphs = if f.memo_paragraphs.is_empty() {
+                        std::slice::from_ref(&empty_memo)
+                    } else {
+                        &f.memo_paragraphs
+                    };
+
+                    for para in memo_paragraphs {
                         ctx.para_shape_ids.reference(para.para_shape_id);
                         let sid = ctx.effective_style_id(para.style_id);
                         ctx.style_ids.reference(sid as u16);

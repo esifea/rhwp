@@ -261,13 +261,15 @@ fn removed_memo_anchor_cannot_replay_orphan_tail() {
         });
     }
     assert!(removed, "원본의 실제 본문 MEMO anchor를 제거한다");
-    assert!(
-        matches!(
-            serialize_hwp(&model),
-            Err(SerializeError::UnsupportedInput(_))
-        ),
-        "소유 anchor가 사라진 목록을 원본 그대로 저장하면 안 된다"
-    );
+    let saved = serialize_hwp(&model).expect("메모 목록 재작성으로 고아 tail을 제거한다");
+    let reopened = DocumentCore::from_bytes(&saved).unwrap();
+    for section in &reopened.document().sections {
+        let records =
+            rhwp::parser::record::Record::read_all(section.raw_stream.as_deref().unwrap()).unwrap();
+        assert!(records
+            .iter()
+            .all(|record| record.tag_id != rhwp::parser::tags::HWPTAG_MEMO_LIST));
+    }
 }
 
 #[test]

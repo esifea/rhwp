@@ -12,6 +12,9 @@ pub struct SectionTail {
     /// 로드 후 모델 정규화가 끝난 시점의 바탕쪽·메모 참조 투영.
     #[serde(skip)]
     pub(crate) projection_seal: Option<[u8; 32]>,
+    /// Unsupported master-page edits must not replay stale independent lists.
+    #[serde(skip)]
+    pub(crate) master_projection_seal: Option<[u8; 32]>,
 }
 
 enum Node<'a> {
@@ -105,15 +108,32 @@ pub(crate) fn projection_digest(doc: &Document) -> [u8; 32] {
     )
 }
 
+pub(crate) fn master_projection_digest(doc: &Document) -> [u8; 32] {
+    let masters: Vec<_> = doc
+        .sections
+        .iter()
+        .map(|s| &s.section_def.master_pages)
+        .collect();
+    crate::model::raw_provenance::value_digest(&masters, "바탕쪽 모델 투영은 메모리에서 직렬화한다")
+}
+
+pub(crate) fn memo_projection_changed(doc: &Document) -> bool {
+    let digest = projection_digest(doc);
+    doc.sections
+        .iter()
+        .filter_map(|s| s.trailing_lists.as_ref())
+        .any(|tail| tail.projection_seal != Some(digest))
+}
+
 pub(crate) fn validate_preservation(doc: &Document) -> Result<(), String> {
     if !doc.sections.iter().any(|s| s.trailing_lists.is_some()) {
         return Ok(());
     }
-    let digest = projection_digest(doc);
+    let digest = master_projection_digest(doc);
     for (index, section) in doc.sections.iter().enumerate() {
         if let Some(tail) = &section.trailing_lists {
-            if tail.projection_seal != Some(digest) {
-                return Err(format!("구역 {index}의 원본 바탕쪽·메모 목록과 현재 모델의 참조가 달라졌습니다. 이 목록 자체의 재작성은 아직 지원하지 않습니다."));
+            if tail.master_projection_seal != Some(digest) {
+                return Err(format!("구역 {index}의 원본 바탕쪽 목록과 현재 모델의 참조가 달라졌습니다. 바탕쪽 목록 자체의 재작성은 아직 지원하지 않습니다."));
             }
         }
     }

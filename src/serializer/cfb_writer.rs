@@ -15,7 +15,8 @@ use crate::model::bin_data::{BinData, BinDataType, MAX_BIN_DATA_BYTES};
 use crate::model::document::{Document, Preview};
 use crate::password_crypto::{encrypt_hwp5_stream, HWP5_ENCRYPT_VERSION};
 
-use super::body_text::serialize_section_for_version;
+use super::body_text::try_collect_memo_lists;
+
 use super::content_loss::{
     ContentLoss, ContentLossReason, ContentLossReport, SerializedDocument, SerializedFormat,
 };
@@ -174,7 +175,26 @@ where
     let mut section_bytes_list = Vec::new();
     let mut viewtext_history = Vec::new();
     let mut form_id_allocator = None;
+    let mut memo_lists = storage.vec(0).map_err(storage_error)?;
     for section in &doc.sections {
+        for field in try_collect_memo_lists(section, storage).map_err(storage_error)? {
+            storage
+                .push(&mut memo_lists, field)
+                .map_err(storage_error)?;
+        }
+    }
+    let has_native_tail = doc.sections.iter().any(|s| s.trailing_lists.is_some());
+    let rebuild_memo_tail = if has_native_tail {
+        crate::model::section_tail::memo_projection_changed(doc)
+    } else {
+        !memo_lists.is_empty()
+            && doc
+                .sections
+                .iter()
+                .any(|s| !s.raw_provenance_permits_reuse())
+    };
+
+    for (section_index, section) in doc.sections.iter().enumerate() {
         let split_starts: Vec<usize> =
             if !split_multi_sec_pr || section.raw_provenance_permits_reuse() {
                 Vec::new()
@@ -195,9 +215,17 @@ where
         if split_starts.is_empty() {
             let prepared =
                 super::form_identity::prepare_section(section, doc, &mut form_id_allocator)?;
+            let memos = rebuild_memo_tail.then(|| {
+                if section_index + 1 == doc.sections.len() {
+                    memo_lists.as_slice()
+                } else {
+                    &[]
+                }
+            });
             let bytes = super::body_text::try_serialize_section_for_version(
                 &prepared,
                 output_version,
+                memos,
                 storage,
             )
             .map_err(storage_error)?;
@@ -248,10 +276,18 @@ where
             };
             let prepared =
                 super::form_identity::prepare_section(&sub, doc, &mut form_id_allocator)?;
+            let memos = rebuild_memo_tail.then(|| {
+                if section_index + 1 == doc.sections.len() && k + 1 == starts.len() {
+                    memo_lists.as_slice()
+                } else {
+                    &[]
+                }
+            });
             section_bytes_list.push(
                 super::body_text::try_serialize_section_for_version(
                     &prepared,
                     output_version,
+                    memos,
                     storage,
                 )
                 .map_err(storage_error)?,
