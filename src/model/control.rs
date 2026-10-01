@@ -914,6 +914,19 @@ pub struct Field {
 }
 
 impl Field {
+    pub(crate) fn is_memo(&self) -> bool {
+        self.field_type == FieldType::Memo || self.command.starts_with("MEMO/")
+    }
+
+    /// Use native memo index when older field record omit it
+    pub(crate) fn hwp_memo_index(&self) -> u32 {
+        if self.memo_index != 0 {
+            self.memo_index
+        } else {
+            self.command.split('/').nth(2).and_then(|value| value.parse().ok()).unwrap_or(0)
+        }
+    }
+
     /// 누름틀(ClickHere) command에서 안내문(Direction) 텍스트를 추출한다.
     ///
     /// command 형식: "Clickhere:set:{len}:Direction:wstring:{n}:{text} HelpState:..."

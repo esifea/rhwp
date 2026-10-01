@@ -21,10 +21,11 @@ use super::tags;
 
 mod drawing_text_structure;
 
-use crate::model::control::{Control, UnknownControl};
+use crate::model::control::{Control, Field, FieldType, UnknownControl};
 use crate::model::document::{RawRecord, Section, SectionDef};
 use crate::model::footnote::FootnoteShape;
 use crate::model::header_footer::{HeaderFooterApply, MasterPage};
+use crate::model::identity::walk::{walk, Node};
 use crate::model::page::{
     BindingMethod, ColumnDef, ColumnDirection, ColumnType, PageBorderFill, PageDef,
 };
@@ -32,6 +33,7 @@ use crate::model::paragraph::{
     CharShapeRef, ColumnBreakType, FieldRange, LineSeg, OrphanFieldEnd, Paragraph, RangeTag,
     TitleMark,
 };
+use std::collections::{BTreeMap, VecDeque};
 
 /// `PARA_TEXT` 한 레코드에서 뽑아낸 문단 본문 축 정보.
 struct ParaTextParts {
@@ -41,6 +43,7 @@ struct ParaTextParts {
     tab_extended: Vec<[u16; 7]>,
     title_marks: Vec<TitleMark>,
     orphan_field_ends: Vec<OrphanFieldEnd>,
+    memo_field_controls: Vec<usize>,
     /// [#5174] PARA_TEXT 에 묶음 빈칸 **제어코드**(0x001E)가 실제로 있었는가.
     ///
     /// 리터럴 `a0 00` 과 갈라야 저장에서 원본 표기를 되돌릴 수 있다. PARA_HEADER 의
@@ -56,6 +59,7 @@ pub enum BodyTextError {
     ParseError(String),
     /// An owned drawing text area is incomplete; never replace its section with an empty one.
     DrawingTextStructure(String),
+    MemoStructure(String),
 }
 
 impl std::fmt::Display for BodyTextError {
@@ -65,6 +69,7 @@ impl std::fmt::Display for BodyTextError {
             BodyTextError::DrawingTextStructure(e) => {
                 write!(f, "그리기 내부 영역 구조 오류: {}", e)
             }
+            BodyTextError::MemoStructure(e) => write!(f, "Memo 구조 오류: {}", e),
             BodyTextError::ParseError(e) => write!(f, "BodyText 파싱 오류: {}", e),
         }
     }
@@ -76,8 +81,10 @@ impl std::error::Error for BodyTextError {}
 ///
 /// data: 압축 해제된(배포용은 복호화+해제된) 레코드 바이트 스트림
 pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
+    validate_memo_framing(data)?;
     let records = Record::read_all(data).map_err(|e| BodyTextError::RecordError(e.to_string()))?;
     drawing_text_structure::validate(&records)?;
+    let memo_lists = parse_memo_lists(&records)?;
 
     let mut section = Section::default();
     let mut idx = 0;
@@ -109,6 +116,7 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
         }
     }
 
+    attach_memo_lists(std::slice::from_mut(&mut section), memo_lists);
     link_orphan_field_ends(&mut section.paragraphs);
 
     // 확장 바탕쪽 파싱: 마지막 문단 이후의 LIST_HEADER (level=1)
@@ -147,6 +155,172 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
     }
 
     Ok(section)
+}
+
+/// Retain recognizable memo
+fn validate_memo_framing(data: &[u8]) -> Result<(), BodyTextError> {
+    let malformed = || BodyTextError::MemoStructure("truncated memo record framing".into());
+    let mut position = 0;
+    let mut memo_context = false;
+
+    while position < data.len() {
+        let remaining = data.len() - position;
+        if remaining < 4 {
+            let memo_tag = remaining >= 2
+                && u16::from_le_bytes([data[position], data[position + 1]]) & 0x3ff == tags::HWPTAG_MEMO_LIST;
+            if memo_context || memo_tag {
+                return Err(malformed());
+            }
+            break;
+        }
+        let header = u32::from_le_bytes(data[position..position + 4].try_into().unwrap());
+
+        position += 4;
+        memo_context |= (header & 0x3ff) as u16 == tags::HWPTAG_MEMO_LIST;
+
+        let mut size = header >> 20;
+        if size == 0xfff {
+            if data.len() - position < 4 {
+                if memo_context {
+                    return Err(malformed());
+                }
+                break;
+            }
+
+            size = u32::from_le_bytes(data[position..position + 4].try_into().unwrap());
+            position += 4;
+        }
+
+        let Some(end) = position.checked_add(size as usize).filter(|&end| end <= data.len())
+        else {
+            if memo_context {
+                return Err(malformed());
+            }
+            break;
+        };
+        position = end;
+    }
+
+    Ok(())
+}
+
+/// Decode memo lists independently.
+/// Each count owns its sibling paragraph group.
+fn parse_memo_lists(records: &[Record]) -> Result<Vec<Field>, BodyTextError> {
+    let malformed = || BodyTextError::MemoStructure("incomplete memo list".into());
+    let mut memos = Vec::new();
+    let mut index = 0;
+
+    while index < records.len() {
+        let record = &records[index];
+
+        if record.tag_id != tags::HWPTAG_MEMO_LIST {
+            index += 1;
+            continue;
+        }
+        if record.level != 1 || record.data.len() != 4 {
+            return Err(malformed());
+        }
+
+        let memo_index = u32::from_le_bytes(record.data[..4].try_into().map_err(|_| malformed())?);
+        let level = record.level;
+        index += 1;
+        let header = records.get(index).ok_or_else(malformed)?;
+        if header.tag_id != tags::HWPTAG_LIST_HEADER || header.level != level || header.data.len() < 8
+        {
+            return Err(malformed());
+        }
+        let count = u32::from_le_bytes(header.data[..4].try_into().map_err(|_| malformed())?) as usize;
+        let attributes = u32::from_le_bytes(header.data[4..8].try_into().map_err(|_| malformed())?);
+        let direction = attributes & 7;
+
+        if count > records.len().saturating_sub(index + 1) {
+            return Err(malformed());
+        }
+        if direction > 1 {
+            return Err(BodyTextError::MemoStructure("unsupported memo text direction".into()));
+        }
+
+        index += 1;
+        let mut paragraphs = Vec::new();
+
+        for _ in 0..count {
+            let first = records.get(index).ok_or_else(malformed)?;
+            if first.tag_id != tags::HWPTAG_PARA_HEADER || first.level != level {
+                return Err(malformed());
+            }
+
+            let start = index;
+            index += 1;
+            while index < records.len() && records[index].level > level {
+                index += 1;
+            }
+
+            let para = parse_paragraph(&records[start..index]).map_err(|error| BodyTextError::MemoStructure(error.to_string()))?;
+            paragraphs.push(para);
+        }
+
+        if records.get(index).is_some_and(|record| {
+            record.tag_id == tags::HWPTAG_PARA_HEADER && record.level == level
+        }) {
+            return Err(BodyTextError::MemoStructure("memo list contains undeclared paragraphs".into()));
+        }
+
+        link_orphan_field_ends(&mut paragraphs);
+        memos.push(Field {
+            memo_index,
+            memo_paragraphs: paragraphs,
+            memo_text_direction: (direction == 1).then(|| "VERTICAL".into()),
+            ..Default::default()
+        });
+    }
+
+    Ok(memos)
+}
+
+fn attach_memo_lists(sections: &mut [Section], memos: Vec<Field>) -> usize {
+    let mut by_index: BTreeMap<u32, VecDeque<Field>> = BTreeMap::new();
+    for memo in memos {
+        by_index.entry(memo.memo_index).or_default().push_back(memo);
+    }
+
+    for section in sections {
+        let _ = walk(&mut section.paragraphs, |node| {
+            if let Node::Control(Control::Field(field)) = node {
+                if field.is_memo() {
+                    if let Some(memo) = by_index.get_mut(&field.hwp_memo_index()).and_then(VecDeque::pop_front)
+                    {
+                        field.field_type = FieldType::Memo;
+                        field.memo_index = memo.memo_index;
+                        field.memo_paragraphs = memo.memo_paragraphs;
+                        field.memo_text_direction = memo.memo_text_direction;
+                    }
+                }
+            }
+
+            Ok(())
+        });
+    }
+
+    by_index.values().map(VecDeque::len).sum()
+}
+
+/// Native memo lists in the final section of which fields belong to earlier sections.
+pub(crate) fn link_memo_lists_across_sections(sections: &mut [Section]) -> Result<(), BodyTextError> {
+    let mut memos = Vec::new();
+
+    for section in sections.iter() {
+        if let Some(raw) = &section.raw_stream {
+            let records = Record::read_all(raw).map_err(|error| BodyTextError::RecordError(error.to_string()))?;
+            memos.extend(parse_memo_lists(&records)?);
+        }
+    }
+
+    if attach_memo_lists(sections, memos) != 0 {
+        return Err(BodyTextError::MemoStructure("memo list has no matching field".into()));
+    }
+
+    Ok(())
 }
 
 /// 다단락 필드의 종료 마커에 짝 `fieldBegin` 의 id 를 채운다.
@@ -279,6 +453,7 @@ pub fn parse_paragraph(records: &[Record]) -> Result<Paragraph, BodyTextError> {
 
     let mut para = parse_para_header(&records[0].data);
     let base_level = records[0].level;
+    let mut memo_field_controls = Vec::new();
 
     let mut i = 1;
     while i < records.len() {
@@ -306,6 +481,7 @@ pub fn parse_paragraph(records: &[Record]) -> Result<Paragraph, BodyTextError> {
                 if parts.nb_space_control {
                     para.control_mask |= 1u32 << 0x001E;
                 }
+                memo_field_controls = parts.memo_field_controls;
             }
             tags::HWPTAG_PARA_CHAR_SHAPE => {
                 para.char_shapes = parse_para_char_shape(&record.data);
@@ -370,7 +546,16 @@ pub fn parse_paragraph(records: &[Record]) -> Result<Paragraph, BodyTextError> {
         i += 1;
     }
 
+    // HWP5 memo's CTRL_HEADER can be Unknown even when PARA_TEXT explicitly has FILED_MEMO begin.
+    // Trust this rather than generic bit15.
+    for index in memo_field_controls {
+        if let Some(Control::Field(field)) = para.controls.get_mut(index) {
+            field.field_type = FieldType::Memo;
+        }
+    }
+
     para.import_markpen_range_tags();
+
     Ok(para)
 }
 
@@ -436,6 +621,7 @@ fn parse_para_text(data: &[u8]) -> ParaTextParts {
     let mut text = String::with_capacity(data.len());
     let mut char_offsets: Vec<u32> = Vec::with_capacity(n_units);
     let mut field_ranges: Vec<FieldRange> = Vec::new();
+    let mut memo_field_controls = Vec::new();
     let mut tab_extended: Vec<[u16; 7]> = Vec::new();
     let mut title_marks: Vec<TitleMark> = Vec::new();
     let mut orphan_field_ends: Vec<OrphanFieldEnd> = Vec::new();
@@ -520,6 +706,9 @@ fn parse_para_text(data: &[u8]) -> ParaTextParts {
             // 확장/인라인 컨트롤 문자: 8 code unit = 16바이트
             if ch == 0x0003 {
                 // FIELD_BEGIN: 확장 컨트롤 → controls[]에 대응
+                if data.get(pos + 2..pos + 6) == Some(tags::FIELD_MEMO.to_le_bytes().as_slice()) {
+                    memo_field_controls.push(ctrl_idx);
+                }
                 field_stack.push((char_count, ctrl_idx));
                 ctrl_idx += 1;
             } else if ch == 0x0004 {
@@ -678,6 +867,7 @@ fn parse_para_text(data: &[u8]) -> ParaTextParts {
         title_marks,
         orphan_field_ends,
         nb_space_control,
+        memo_field_controls,
     }
 }
 

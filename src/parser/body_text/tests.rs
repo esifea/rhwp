@@ -1271,6 +1271,7 @@ fn parse_para_text_reference(data: &[u8]) -> ParaTextParts {
         title_marks,
         orphan_field_ends,
         nb_space_control,
+        memo_field_controls: Vec::new(),
     }
 }
 
