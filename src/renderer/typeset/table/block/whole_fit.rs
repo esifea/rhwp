@@ -262,7 +262,10 @@ impl TypesetEngine {
         // 일반 declared-fit에서 제외되어 measured expansion으로 다음 쪽에 통째
         // 이월될 수 있다. leftover에 declaration이 들어가면 source frame을
         // 존중하되, 위의 누락 host-line 형상은 physical band 경로로 보낸다.
+        // Do not trust stored source frame if table's measured height has increased by reflow
         let hwpx_tac_cell_leftover_declared_fits = st.profile.hwpx_stored_layout()
+            && !(crate::renderer::table_reflows_cell_content(table)
+                 && crate::renderer::table_row_body_height(&ft.cumulative_heights) > hwpunit_to_px(table.common.height as i32, self.dpi) + 0.5)
             && table.common.treat_as_char
             && matches!(
                 table.page_break,

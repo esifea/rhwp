@@ -26,6 +26,36 @@ pub(in crate::renderer::typeset) struct TacFitPlan {
     pub advance_before_place: bool,
 }
 
+/// Owner-line mapping for fit and table placement.
+pub(in crate::renderer::typeset) fn table_line_index(
+    para: &Paragraph,
+    table: &crate::model::table::Table,
+    control_index: usize,
+    tac_count: usize,
+    fmt: &FormattedParagraph,
+    flow: &TacFlowQuery<'_>,
+) -> usize {
+    if tac_count <= 1 {
+        return flow.tac_table_line_index(para, table, fmt).unwrap_or(0);
+    }
+
+    // When multiple tables exist in a paragraph, get first table's line index
+    let leading = para.controls.iter().find_map(|control| {
+            let Control::Table(table) = control else {
+                return None;
+            };
+            flow.is_effective_tac_table(para, table, fmt).then(|| flow.tac_table_line_index(para, table, fmt))
+        }).flatten().unwrap_or(0);
+    // Count how many valid tables before control_index
+    let prior = para.controls.iter().take(control_index).filter(|control| {
+            matches!(control, Control::Table(table)
+            if flow.is_effective_tac_table(para, table, fmt))
+        }).count();
+
+    // Final offset
+    leading + prior
+}
+
 /// 가용 높이(진단 포함)는 원래 저장 경계/최종 fit 위치에서만 조회한다.
 pub(super) fn prepare(
     para_idx: usize,
@@ -63,26 +93,48 @@ pub(super) fn prepare(
     } else {
         None
     };
-    // [편집 세션] TAC 표가 셀 편집으로 자라면 저장 줄높이(표 선언 인코딩)
-    // 기반 fit 은 과소가 된다 — 실측(mt)을 하한으로 써야 넘친 표가 pre-flush
-    // 로 새 쪽에 간다(셀 Enter 재현: 실측이 선언 fit 으로 1쪽에 남아 하단이
-    // 잘림). 저장 bounds 특례도 성장 표에는 무효다(저장 좌표는 편집 전 형상).
-    let session_grown_tac_total = (has_tac && flow.session_edited())
-        .then(|| {
-            para.controls.iter().enumerate().find_map(|(ci, ctrl)| {
-                let Control::Table(t) = ctrl else { return None };
-                if !flow.is_effective_tac_table(para, t, fmt) {
-                    return None;
-                }
-                let declared = hwpunit_to_px(t.common.height as i32, dpi);
-                measured_tables
-                    .iter()
-                    .find(|m| m.para_index == para_idx && m.control_index == ci)
-                    .filter(|m| m.total_height > declared + 8.0)
-                    .map(|m| m.total_height)
+    // [Edit/Reflow session] Memos or tables that grow via cell edits or missing line segments will be underestimated
+    // if we rely solely on stored heights. We must use measured height as a hard floor to trigger early pre-flush
+    // to the next page, preventing out of bound text clipping at the bottom of the page.
+    let mut grown_line_heights = fmt.line_heights.clone();
+    let mut has_grown_table = false;
+    for (ci, ctrl) in para.controls.iter().enumerate() {
+        let Control::Table(table) = ctrl else {
+            continue;
+        };
+        if !flow.is_effective_tac_table(para, table, fmt) {
+            continue;
+        }
+
+        // Get grown tables: 1. session_edited + 8.0px margin, 2. reflows + 0.5px amrgin
+        let reflows = !page.profile.native_hwp5_layout() && crate::renderer::table_reflows_cell_content(table);
+        let declared = hwpunit_to_px(table.common.height as i32, dpi);
+        let Some(measured) = measured_tables.iter()
+            .find(|m| m.para_index == para_idx && m.control_index == ci)
+            .filter(|m| {
+                (reflows && crate::renderer::table_row_body_height(&m.cumulative_heights) > declared + 0.5)
+                 || (flow.session_edited() && crate::renderer::table_row_body_height(&m.cumulative_heights) > declared + 8.0)
             })
-        })
-        .flatten();
+        else {
+            continue;
+        };
+        has_grown_table = true;
+
+        let line_index = table_line_index(para, table, ci, tac_count, fmt, &flow);
+        if grown_line_heights.len() <= line_index {
+            grown_line_heights.resize(line_index + 1, 0.0);
+        }
+        // Get final frame by table height + top/bottom outer_margin
+        let frame = measured.total_height
+            + hwpunit_to_px(table.outer_margin_top as i32, dpi)
+            + hwpunit_to_px(table.outer_margin_bottom as i32, dpi);
+        grown_line_heights[line_index] = grown_line_heights[line_index].max(frame);
+    }
+    // Reserve host line frames using the placement path owner mapping
+    let session_grown_tac_total = has_grown_table.then(|| {
+        grown_line_heights.iter().sum::<f64>()
+            + fmt.line_spacings.iter().sum::<f64>() + fmt.spacing_before + fmt.spacing_after
+    });
     // 실제 TAC 배치가 사용하는 소유 줄 상자는 바깥여백을 이미 포함한다.
     // pre-flush에서 fmt와 여백을 다시 더하면 실제로 들어가는 표를 먼저 이월한다.
     let owned_single_tac_frame = (page.profile.hwpx_stored_layout()

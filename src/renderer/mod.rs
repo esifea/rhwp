@@ -1400,6 +1400,28 @@ pub(crate) fn para_has_no_stored_line_segs(p: &crate::model::paragraph::Paragrap
     p.line_segs.is_empty() || p.line_segs.iter().all(|s| s.tag & 0x8000_0000 != 0)
 }
 
+/// Final row geometry excludes caption height and caption spacing
+pub(crate) fn table_row_body_height(cumulative_heights: &[f64]) -> f64 {
+    cumulative_heights.last().copied().unwrap_or(0.0)
+}
+
+/// Check if any cell need to be redrawn including nested tables
+pub(crate) fn table_reflows_cell_content(table: &crate::model::table::Table) -> bool {
+    table.cells.iter().any(cell_reflows_content)
+}
+
+/// Checks if cell or any of its nested tables need a layout calculation
+pub(crate) fn cell_reflows_content(cell: &crate::model::table::Cell) -> bool {
+    cell.paragraphs.iter().any(|para| {
+        para_has_no_stored_line_segs(para)  // fresh cell
+        || para.controls.iter().any(|control| {
+                // Check if any nested table exist; if so, recursively check nested tables also
+                matches!(control,
+                         crate::model::control::Control::Table(nested) if table_reflows_cell_content(nested))
+        })
+    })
+}
+
 /// 합성 Square 구간은 시작 위치까지의 왼쪽 여백을 이미 차지한다.
 /// 이를 본문 상자의 폭으로 환산해 측정과 배치가 같은 프레임을 사용하게 하며,
 /// 글꼴별 임의 허용 폭은 더하지 않는다.

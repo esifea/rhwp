@@ -2605,6 +2605,10 @@ impl HeightMeasurer {
         // 행별 **컨텐츠** 하한 — 2단계에서만 채워지며, 병합 선언이 행합보다 작을 때
         // (2-b 축소 규칙) 글자가 잘리지 않도록 축소 바닥으로 쓴다.
         let mut content_row_floor = vec![0.0f64; row_count];
+        // Track cells requiring reflow to pinpoint layout updates on non-native documents
+        let fresh_cells: Vec<bool> = table.cells.iter()
+            .map(|cell| !self.is_native_hwp5 && crate::renderer::cell_reflows_content(cell)).collect();
+        let mut fresh_content_floors = Vec::new();
 
         // 1단계: row_span==1인 셀에서 행별 최대 높이 추출
         // cell.height는 HWP가 저장한 셀 높이 (pad + content, trailing ls 미포함)
@@ -3600,6 +3604,9 @@ impl HeightMeasurer {
                         }
                     }
                 }
+                if fresh_cells[cell_index] {
+                    fresh_content_floors.push((r, 1, required_height));
+                }
                 if required_height > content_row_floor[r] {
                     content_row_floor[r] = required_height;
                 }
@@ -4016,6 +4023,9 @@ impl HeightMeasurer {
                         .max(wrap_bottom);
                     content_height + pad_top + pad_bottom
                 };
+                if fresh_cells[cell_index] {
+                    fresh_content_floors.push((r, span, required_height));
+                }
                 let combined: f64 = (r..r + span).map(|i| row_heights[i]).sum();
                 if required_height > combined {
                     let deficit = required_height - combined;
@@ -4064,7 +4074,7 @@ impl HeightMeasurer {
         // 편집으로 셀이 자란 성장분까지 선언높이로 눌러 다른 행의 몫을 잠식한다
         // (셀 Enter 재현: 표가 선언 높이에 고정된 채 행 경계만 위로 밀림).
         // 편집 세션은 실측을 신뢰한다.
-        let table_height = if table.common.treat_as_char
+        let mut table_height = if table.common.treat_as_char
             && !self.session_edited
             && common_h > 0.0
             && raw_table_height > common_h + shrink_threshold
@@ -4080,29 +4090,14 @@ impl HeightMeasurer {
             // 마지막 글줄을 clip 한다 (exam_eng 선택지 ① 1.3px, 심사서식
             // 반 줄 미만 초과). 한글은 그 행을 내용에 맞춰 키운다.
             let mut floors = vec![0.0f64; row_count];
-            // 🔴 저장 LINE_SEG 로 하한을 만들 수 없는 표는 하한이 0 이 되어
-            // "이 행은 얼마든지 눌러도 된다"가 된다 — 바로 위 #6030 이 막으려던 클립이
-            // 클립보드 재구성·생성계 문서에서 그대로 재발한다(실측: 행 52.91×3 이
-            // 47.86/62.99/47.86 으로 눌려 셋째 줄 baseline 438.18 이 클립 바닥 436.03 아래로
-            // 나가 "확보" 가 괘선에 잘렸다). 저장분이 **하나라도** 있는 표는 종전 그대로 둔다.
-            // (`any(!no_ls)` 로 판정한다. `all(no_ls)` 는 문단이 없는 셀에서 공허참이 되어
-            //  정상 저장 문서까지 이 경로로 새어 든다.)
-            // 🔴 한글이 직접 쓴 문서(HWP5 네이티브 조판)는 저장 lineseg 가 없는 표라도
-            // 종전 배분을 유지한다 — 하한을 새로 세우면 그 표가 덜 눌려 아래 흐름이
-            // 밀리고, 실측(20544835 진안 서식)에서 글자끼리 겹치는 결함이 새로 생겼다.
-            // 이 손질의 대상은 저장 조판이 아예 없는 재구성·생성계 문서다.
-            // 🔴 이 갈래는 출처 대리지표다 — lineseg 유무로는 두 부류를 못 가른다.
-            // 20544835 는 저장 seg 가 0 인데도 HWP5 네이티브로 열린다(생성기가 쓴
-            // .hwp). 대가로 .hwp 문서에 붙여넣는 경우에는 이 하한이 꺼진다.
-            let table_has_stored_segs = self.is_native_hwp5
-                || table
-                    .cells
-                    .iter()
-                    .flat_map(|c| c.paragraphs.iter())
-                    .any(|p| !crate::renderer::para_has_no_stored_line_segs(p));
-            for cell in &table.cells {
+            for (cell_index, cell) in table.cells.iter().enumerate() {
                 let r = cell.row as usize;
                 if cell.row_span != 1 || r >= row_count || cell.paragraphs.is_empty() {
+                    continue;
+                }
+                // Use measured content height as a safe floor to prevent text clipping
+                if fresh_cells[cell_index] {
+                    floors[r] = floors[r].max(content_row_floor[r]);
                     continue;
                 }
                 if cell
@@ -4110,14 +4105,6 @@ impl HeightMeasurer {
                     .iter()
                     .any(crate::renderer::para_has_no_stored_line_segs)
                 {
-                    if !table_has_stored_segs {
-                        // 2단계에서 이미 잰 이 행의 콘텐츠 필요 높이(상하 여백 포함)를
-                        // 하한으로 쓴다. 새 계산·새 필드 없이 기존 값을 그대로 쓴다.
-                        let floor = content_row_floor[r].min(row_heights[r]);
-                        if floor > floors[r] {
-                            floors[r] = floor;
-                        }
-                    }
                     continue;
                 }
                 let content_hu = cell
@@ -4285,6 +4272,21 @@ impl HeightMeasurer {
         } else {
             raw_table_height
         };
+
+        // Saved-frame compression may consume slack, never fresh cell content
+        if table.common.treat_as_char && !fresh_content_floors.is_empty() {
+            for &(start, span, needed) in &fresh_content_floors {
+                let end = start + span;
+                // height after compression: sum of row_height + sum of cell_spacing
+                let occupied = row_heights[start..end].iter().sum::<f64>() 
+                               + hwpunit_to_px(table.cell_spacing as i32, self.dpi) * span.saturating_sub(1) as f64;
+                // Resize height to prevent text clipping
+                if needed > occupied {
+                    row_heights[end - 1] += needed - occupied;
+                }
+            }
+            table_height = row_heights.iter().sum::<f64>() + cell_spacing * row_count.saturating_sub(1) as f64;
+        }
 
         // 누적 행 높이 계산 (이진 탐색용)
         let mut cumulative_heights = vec![0.0f64; row_count + 1];
