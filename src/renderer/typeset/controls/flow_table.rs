@@ -91,7 +91,20 @@ pub(in crate::renderer::typeset) fn place(
         .find(|mt| mt.para_index == para_idx && mt.control_index == ctrl_idx);
     let is_first_placed = first_placed_table == Some(ctrl_idx);
     let is_last_placed = last_placed_table == Some(ctrl_idx);
-    if engine.is_effective_tac_table(para, table, fmt) {
+    // Fresh block content uses the split path when its grown frame exceeds the page.
+    let reflowed_block_table = !st.profile.native_hwp5_layout()
+        && crate::renderer::table_reflows_cell_content(table)
+        && crate::renderer::table_row_body_height(&ft.cumulative_heights)
+            > hwpunit_to_px(table.common.height as i32, engine.dpi) + 0.5
+        && st.current_height + ft.total_height > st.available_height()
+        && !matches!(table.page_break, crate::model::table::TablePageBreak::None)
+        && !crate::renderer::height_measurer::is_tac_table_inline_in_para(
+            table,
+            st.host_wrap_column_width_hu(),
+            para,
+        );
+
+    if engine.is_effective_tac_table(para, table, fmt) && !reflowed_block_table {
         if !engine.render_normalization.table_text_reflowed(table) {
             if let Some(placement) = super::stored_tac::prepare_coanchored_first_line(
                 ctrl_idx,

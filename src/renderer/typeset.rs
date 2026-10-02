@@ -4085,24 +4085,14 @@ impl TypesetEngine {
             .take(ctrl_idx)
             .filter(|c| matches!(c, Control::Table(t) if self.is_effective_tac_table(para, t, fmt)))
             .count();
-        let tac_seg_idx = if tac_count > 1 {
-            // [#2322] 텍스트-host 다중 TAC: 선행 텍스트 줄 수만큼 lineseg 매핑을
-            // 오프셋한다. 종전 count 기반 매핑은 제목 줄이 있는 문단에서 표1을
-            // 텍스트 줄(예: 16px)에 매핑해 851px 표가 16px 로 계상됐다 (20862337
-            // r15 재검증 −1 서식 계열). 빈-host 1:1 문서는 오프셋 0 으로 불변.
-            let leading_offset = para
-                .controls
-                .iter()
-                .find_map(|c| match c {
-                    Control::Table(t) if self.is_effective_tac_table(para, t, fmt) => Some(t),
-                    _ => None,
-                })
-                .and_then(|t| self.tac_table_line_index(para, t, fmt))
-                .unwrap_or(0);
-            leading_offset + prior_tac
-        } else {
-            tac_table_line_idx.unwrap_or(0)
-        };
+        let tac_seg_idx = controls::tac_fit::table_line_index(
+            para,
+            table,
+            ctrl_idx,
+            tac_count,
+            fmt,
+            &self.tac_flow_query(),
+        );
 
         let owned_single_tac_row_height =
             (st.profile.hwpx_stored_layout() && tac_count == 1 && fmt.line_heights.len() == 1)
@@ -4261,7 +4251,14 @@ impl TypesetEngine {
         // 858px 표의 높이로 채택한다 — 서식 문서 과소분할(−1쪽 계열 26건, r15
         // 재검증). 측정 높이보다 작으면 측정 높이로 보정한다. 저장 lineseg 보유
         // 문서는 불변 (#2237 측정-저장 발산 축과 격리).
-        let table_height = if para.line_segs.is_empty() && table_height + 0.5 < ft.total_height {
+        // Determine reflow if measured body height exceeds stored table height
+        let reflows_cell_content = !st.profile.native_hwp5_layout()
+                                   && crate::renderer::table_reflows_cell_content(table)
+                                   && crate::renderer::table_row_body_height(&ft.cumulative_heights)
+                                        > hwpunit_to_px(table.common.height as i32, self.dpi) + 0.5;
+        let table_height = if (para.line_segs.is_empty() || reflows_cell_content)
+                           && table_height + 0.5 < ft.total_height
+        {
             ft.total_height
         } else {
             table_height
@@ -4436,7 +4433,9 @@ impl TypesetEngine {
         let saved_tac_table_frame_height =
             stored_tac_table_frame_height(table, self.dpi, table_height);
         let current_page_vpos_base = st.vpos_page_base.unwrap_or(0);
-        let saved_tac_table_bottom_fits = !hwpx_rowbreak_tac_missing_owned_line
+        // Invalidate stored layout fit if table is reflowed
+        let saved_tac_table_bottom_fits = !reflows_cell_content
+            && !hwpx_rowbreak_tac_missing_owned_line
             && Some(current_page_vpos_base)
                 .and_then(|base| {
                     para.line_segs
