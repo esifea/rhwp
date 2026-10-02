@@ -68,6 +68,10 @@ pub struct Paragraph {
     /// 직렬화하지 않고, 재페이지네이션이 실제 쪽 소속에서 다시 결정한다.
     #[serde(skip_serializing)]
     pub layout_field_values: Vec<(usize, String)>,
+    /// None until first replacement; false for source-backed, true for layout-only.
+    /// Capture ownership before clearing rows and retain it through later reflow.
+    #[serde(skip_serializing)]
+    pub line_segs_are_layout_only: Option<bool>,
     /// [#5961] `line_segs[*].text_start` 를 HWP5 문단 축으로 올리는 데 필요한 보정폭.
     ///
     /// `LineSeg::text_start` 는 파서가 **파일 값을 그대로** 담으므로 출처마다 축이 다르다.
@@ -881,6 +885,9 @@ impl Paragraph {
     /// cannot disagree about where source state ends.
     #[inline]
     pub fn serializable_line_segs(&self) -> &[LineSeg] {
+        if self.line_segs_are_layout_only == Some(true) {
+            return &self.line_segs[..0];
+        }
         let source_len = self
             .line_segs
             .len()
@@ -903,8 +910,21 @@ impl Paragraph {
         self.stored_text_partition_dirty
     }
 
+    fn capture_line_seg_ownership(&mut self) {
+        if self.line_segs_are_layout_only.is_none() {
+            self.line_segs_are_layout_only = Some(self.serializable_line_segs().is_empty());
+        }
+    }
+
+    // Invalidate rows while keeping reflow metadata until replacement succeeds.
+    pub(crate) fn clear_line_segs_for_reflow(&mut self) {
+        self.capture_line_seg_ownership();
+        self.line_segs.clear();
+    }
+
     /// Replace stored rows and their validity state at one owner boundary.
     pub(crate) fn replace_line_segs(&mut self, line_segs: Vec<LineSeg>) {
+        self.capture_line_seg_ownership();
         self.line_segs = line_segs;
         self.layout_object_projection = false;
         self.layout_space_metrics.clear();
@@ -2118,6 +2138,7 @@ impl Paragraph {
             layout_space_metrics: Vec::new(),
             layout_object_projection: false,
             layout_field_values: Vec::new(),
+            line_segs_are_layout_only: self.line_segs_are_layout_only,
             // 분리된 문단의 줄은 새로 계산된 것이라 조판 전용 보강 줄이 없다 (#4677).
             layout_only_fill_lines: 0,
             // 편집으로 갈라진 문단의 원본 vertpos 스냅샷은 무효다 (#5847).

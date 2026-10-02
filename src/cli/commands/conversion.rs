@@ -374,7 +374,7 @@ pub(crate) fn convert_hwp(args: &[String]) -> i32 {
                             .expect("verify expected snapshot must exist");
                         let diff = rhwp::serializer::hwpx::roundtrip::diff_documents(
                             expected,
-                            reloaded.document(),
+                            &reloaded.source_line_cache_snapshot(),
                         );
                         // [#3505, #3930] 출처별로 대상 포맷에 표현 자리가 없는 항목만
                         // 걷어낸다. 같은 포맷(HWP5→HWP5) 왕복은 엄격 비교 그대로다.
@@ -575,8 +575,8 @@ pub(crate) fn export_hwpx(args: &[String]) -> i32 {
 
                     if verify_options.verify {
                         let diff = rhwp::serializer::hwpx::roundtrip::diff_documents(
-                            doc.document(),
-                            reloaded.document(),
+                            &doc.source_line_cache_snapshot(),
+                            &reloaded.source_line_cache_snapshot(),
                         );
                         // HWP 계열은 HWPX와 표현 자리가 다른 필드 메타데이터가 있고,
                         // HWP3에는 하이퍼텍스트·빈 그림 imgRect의 추가 정규화가 있다.

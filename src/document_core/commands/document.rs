@@ -2673,9 +2673,39 @@ impl DocumentCore {
             &self.file_name,
             false,
         );
+        Self::project_source_line_caches(&mut snapshot);
         Self::refresh_doc_info_raw_cache(&mut snapshot, storage)?;
         Ok(HwpExportSnapshot { document: snapshot })
     }
+
+    /// Source-backed cache view for persistence verification, without lowering.
+    /// Live layout rows and page state remain untouched.
+    pub fn source_line_cache_snapshot(&self) -> Document {
+        let mut snapshot = self.document.clone();
+        Self::project_source_line_caches(&mut snapshot);
+        snapshot
+    }
+
+    fn project_source_line_caches(document: &mut Document) {
+        for section in &mut document.sections {
+            let project = |node: &mut crate::model::identity::walk::Node<'_>| {
+                if let crate::model::identity::walk::Node::Paragraph(para) = node {
+                    let source_len = para.serializable_line_segs().len();
+                    para.line_segs.truncate(source_len);
+                    para.layout_only_fill_lines = 0;
+                }
+                Ok(())
+            };
+
+            crate::model::identity::walk::walk(&mut section.paragraphs, project)
+                .expect("source cache projection is infallible");
+            for master in &mut section.section_def.master_pages {
+                crate::model::identity::walk::walk(&mut master.paragraphs, project)
+                    .expect("source cache projection is infallible");
+            }
+        }
+    }
+
     /// HWPX 출처 IR 을 HWP 호환 형태로 변환 후 HWP 5.0 CFB 바이너리로 직렬화한다 (#178).
     ///
     /// HWP 출처는 어댑터가 no-op 이므로 `export_hwp_native` 와 동일 결과.
