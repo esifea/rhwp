@@ -107,7 +107,7 @@ fn verify_roundtrip(data: &[u8]) -> Option<usize> {
     let bytes = snapshot.serialize().ok()?;
     let reloaded = rhwp::wasm_api::HwpDocument::from_bytes(&bytes).ok()?;
 
-    let diff = diff_documents(&expected, reloaded.document());
+    let diff = diff_documents(&expected, &reloaded.source_line_cache_snapshot());
     let diff = match source_format {
         FileFormat::Hwp => diff,
         FileFormat::Hwpx => strip_hwpx_to_hwp_noise(diff),

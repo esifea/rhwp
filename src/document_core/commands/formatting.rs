@@ -1971,7 +1971,7 @@ impl DocumentCore {
             .get_mut(sec_idx)
             .and_then(|s| s.paragraphs.get_mut(para_idx))
         {
-            para.line_segs.clear();
+            para.clear_line_segs_for_reflow();
             reflow_line_segs(para, paragraph_box, &styles, self.dpi);
         }
     }
@@ -2009,7 +2009,7 @@ impl DocumentCore {
                 styles.para_styles.get(para.para_shape_id as usize),
                 dpi,
             );
-            para.line_segs.clear();
+            para.clear_line_segs_for_reflow();
             reflow_line_segs(para, paragraph_box, &styles, dpi);
         }
     }

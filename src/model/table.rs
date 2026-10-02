@@ -1769,6 +1769,7 @@ impl Table {
                             char_offsets: para.char_offsets.clone(),
                             char_shapes: para.char_shapes.clone(),
                             line_segs: para.line_segs.clone(),
+                            line_segs_are_layout_only: para.line_segs_are_layout_only,
                             hwpx_axis_shift: para.hwpx_axis_shift,
                             layout_only_fill_lines: para.layout_only_fill_lines,
                             source_line_seg_vertical_pos: para.source_line_seg_vertical_pos.clone(),
