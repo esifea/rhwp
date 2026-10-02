@@ -643,6 +643,8 @@ fn sweep_paragraph(base: &str, a: &Paragraph, b: &Paragraph, out: &mut Divergenc
         char_offsets,
         char_shapes,
         line_segs,
+        // In-memory cache provenance
+        line_segs_are_layout_only: _,
         range_tags,
         field_ranges,
         orphan_field_ends,

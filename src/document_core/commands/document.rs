@@ -2011,9 +2011,37 @@ impl DocumentCore {
         let mut snapshot = self.document.clone();
         self.writeback_reflowed_table_frames(&mut snapshot);
         let _report = convert_if_hwpx_source(&mut snapshot, self.source_format);
+        Self::project_source_line_caches(&mut snapshot);
         Self::refresh_doc_info_raw_cache(&mut snapshot);
         HwpExportSnapshot { document: snapshot }
     }
+
+    /// Source-backed cache view for persistence verification, without lowering.
+    /// Live layout rows and page state remain untouched.
+    pub fn source_line_cache_snapshot(&self) -> Document {
+        let mut snapshot = self.document.clone();
+        Self::project_source_line_caches(&mut snapshot);
+        snapshot
+    }
+
+    fn project_source_line_caches(document: &mut Document) {
+        for section in &mut document.sections {
+            let project = |node: &mut crate::model::identity::walk::Node<'_>| {
+                if let crate::model::identity::walk::Node::Paragraph(para) = node {
+                    let source_len = para.serializable_line_segs().len();
+                    para.line_segs.truncate(source_len);
+                    para.layout_only_fill_lines = 0;
+                }
+                Ok(())
+            };
+
+            crate::model::identity::walk::walk(&mut section.paragraphs, project).expect("source cache projection is infallible");
+            for master in &mut section.section_def.master_pages {
+                crate::model::identity::walk::walk(&mut master.paragraphs, project).expect("source cache projection is infallible");
+            }
+        }
+    }
+
     /// HWPX 출처 IR 을 HWP 호환 형태로 변환 후 HWP 5.0 CFB 바이너리로 직렬화한다 (#178).
     ///
     /// HWP 출처는 어댑터가 no-op 이므로 `export_hwp_native` 와 동일 결과.
@@ -3638,7 +3666,14 @@ mod validate_linesegs_tests {
         let hwp_bytes = crate::serializer::body_text::serialize_section(section);
         let hwp_roundtrip = crate::parser::body_text::parse_body_text_section(&hwp_bytes)
             .expect("published Picture-band rows remain serializable as HWP");
-        assert!(!hwp_roundtrip.paragraphs[325].line_segs.is_empty());
+        assert!(hwp_roundtrip.paragraphs[325].line_segs.is_empty(), "rows regenerated from a missing source cache remain layout only");
+
+        for paragraph_index in 326..332 {
+            assert_eq!(
+                hwp_roundtrip.paragraphs[paragraph_index].line_segs, section.paragraphs[paragraph_index].line_segs,
+                "source-backed Picture-band rows remain serializable"
+            );
+        }
 
         let mut hwpx_context =
             crate::serializer::hwpx::context::SerializeContext::collect_from_document(

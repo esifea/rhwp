@@ -105,8 +105,10 @@ pub(crate) fn edit_verify_report(
             );
         }
     };
-    let diff =
-        rhwp::serializer::hwpx::roundtrip::diff_documents(doc.document(), reloaded.document());
+    let diff = rhwp::serializer::hwpx::roundtrip::diff_documents(
+        &doc.source_line_cache_snapshot(),
+        &reloaded.source_line_cache_snapshot(),
+    );
     let diff = if source_is_hwpx {
         rhwp::serializer::hwpx::roundtrip::strip_hwpx_to_hwp_noise(diff)
     } else {
