@@ -82,7 +82,8 @@ fn fixture(blank_cell: bool) -> Vec<u8> {
         cells.push(paragraph(""));
     }
     let mut host = paragraph("");
-    host.controls.push(Control::Table(Box::new(table(cells, true))));
+    host.controls
+        .push(Control::Table(Box::new(table(cells, true))));
     let doc = document(vec![
         paragraph("Body OLD value"),
         host,
@@ -118,7 +119,8 @@ fn rows(doc: &Document) -> Vec<Vec<LineSeg>> {
 fn gated_cycle(core: &DocumentCore) -> Vec<u8> {
     let live_rows = rows(core.document());
     let pages = core.page_count();
-    core.render_page_svg_native(0).expect("render before persistence");
+    core.render_page_svg_native(0)
+        .expect("render before persistence");
     let snapshot = core.prepare_hwp_export_snapshot();
     let hwp = snapshot.serialize().expect("serialize HWP snapshot");
     assert_eq!(
@@ -140,7 +142,9 @@ fn gated_cycle(core: &DocumentCore) -> Vec<u8> {
         "HWP strict IR gate: {:?}",
         diff.differences
     );
-    let hwpx = loaded.export_hwpx_native().expect("export HWPX through CLI API");
+    let hwpx = loaded
+        .export_hwpx_native()
+        .expect("export HWPX through CLI API");
     let normalized = DocumentCore::from_bytes(&hwpx).expect("reopen normalized HWPX");
     assert_eq!(pages, normalized.page_count(), "HWPX page gate");
     let diff = strip_hwp_to_hwpx_noise(diff_documents(
@@ -163,7 +167,9 @@ fn gated_cycle(core: &DocumentCore) -> Vec<u8> {
 #[test]
 fn cache_free_nested_merged_memo_document_reexports_without_new_source_rows() {
     let source = fixture(false);
-    assert!(rows(&rhwp::parse_document(&source).unwrap()).iter().all(Vec::is_empty));
+    assert!(rows(&rhwp::parse_document(&source).unwrap())
+        .iter()
+        .all(Vec::is_empty));
     let core = DocumentCore::from_bytes(&source).expect("load source");
     assert!(
         rows(core.document()).iter().any(|rows| !rows.is_empty()),
@@ -188,7 +194,8 @@ fn repeated_visible_edits_and_export_keep_missing_cache_contract() {
     for _ in 0..2 {
         let mut core = DocumentCore::from_bytes(&source).expect("load each edit cycle");
         core.insert_text_native(0, 0, 0, "New ").expect("body edit");
-        core.insert_text_in_cell_by_path(0, 1, &[(0, 0, 1), (0, 0, 0)], 0, "New ").expect("nested visible cell edit");
+        core.insert_text_in_cell_by_path(0, 1, &[(0, 0, 1), (0, 0, 0)], 0, "New ")
+            .expect("nested visible cell edit");
         source = gated_cycle(&core);
     }
     let parsed = rhwp::parse_document(&source).unwrap();
@@ -216,7 +223,8 @@ fn empty_cell_reimport_obeys_both_strict_gates() {
 
 #[test]
 fn paragraph_split_and_merge_do_not_promote_generated_rows() {
-    let source = rhwp::serializer::serialize_hwpx(&document(vec![paragraph("Split OLD value")])).unwrap();
+    let source =
+        rhwp::serializer::serialize_hwpx(&document(vec![paragraph("Split OLD value")])).unwrap();
     let core = DocumentCore::from_bytes(&source).unwrap();
     let mut first = core.document().sections[0].paragraphs[0].clone();
     assert!(!first.line_segs.is_empty());
@@ -227,9 +235,13 @@ fn paragraph_split_and_merge_do_not_promote_generated_rows() {
     };
     let parsed = rhwp::parser::body_text::parse_body_text_section(
         &rhwp::serializer::body_text::serialize_section(&section),
-    ).unwrap();
+    )
+    .unwrap();
     assert!(
-        parsed.paragraphs.iter().all(|para| para.line_segs.is_empty()),
+        parsed
+            .paragraphs
+            .iter()
+            .all(|para| para.line_segs.is_empty()),
         "split promoted generated rows"
     );
     first.merge_from(&second);
@@ -301,7 +313,8 @@ fn table_merge_copies_generated_provenance_and_keeps_source_prefix() {
     };
     let parsed = rhwp::parser::body_text::parse_body_text_section(
         &rhwp::serializer::body_text::serialize_section(&section),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(parsed.paragraphs[0].line_segs, vec![source_prefix]);
     assert!(
         parsed.paragraphs[1].line_segs.is_empty(),

@@ -40,17 +40,28 @@ pub(in crate::renderer::typeset) fn table_line_index(
     }
 
     // When multiple tables exist in a paragraph, get first table's line index
-    let leading = para.controls.iter().find_map(|control| {
+    let leading = para
+        .controls
+        .iter()
+        .find_map(|control| {
             let Control::Table(table) = control else {
                 return None;
             };
-            flow.is_effective_tac_table(para, table, fmt).then(|| flow.tac_table_line_index(para, table, fmt))
-        }).flatten().unwrap_or(0);
+            flow.is_effective_tac_table(para, table, fmt)
+                .then(|| flow.tac_table_line_index(para, table, fmt))
+        })
+        .flatten()
+        .unwrap_or(0);
     // Count how many valid tables before control_index
-    let prior = para.controls.iter().take(control_index).filter(|control| {
+    let prior = para
+        .controls
+        .iter()
+        .take(control_index)
+        .filter(|control| {
             matches!(control, Control::Table(table)
             if flow.is_effective_tac_table(para, table, fmt))
-        }).count();
+        })
+        .count();
 
     // Final offset
     leading + prior
@@ -107,13 +118,19 @@ pub(super) fn prepare(
         }
 
         // Get grown tables: 1. session_edited + 8.0px margin, 2. reflows + 0.5px amrgin
-        let reflows = !page.profile.native_hwp5_layout() && crate::renderer::table_reflows_cell_content(table);
+        let reflows = !page.profile.native_hwp5_layout()
+            && crate::renderer::table_reflows_cell_content(table);
         let declared = hwpunit_to_px(table.common.height as i32, dpi);
-        let Some(measured) = measured_tables.iter()
+        let Some(measured) = measured_tables
+            .iter()
             .find(|m| m.para_index == para_idx && m.control_index == ci)
             .filter(|m| {
-                (reflows && crate::renderer::table_row_body_height(&m.cumulative_heights) > declared + 0.5)
-                 || (flow.session_edited() && crate::renderer::table_row_body_height(&m.cumulative_heights) > declared + 8.0)
+                (reflows
+                    && crate::renderer::table_row_body_height(&m.cumulative_heights)
+                        > declared + 0.5)
+                    || (flow.session_edited()
+                        && crate::renderer::table_row_body_height(&m.cumulative_heights)
+                            > declared + 8.0)
             })
         else {
             continue;
@@ -133,7 +150,9 @@ pub(super) fn prepare(
     // Reserve host line frames using the placement path owner mapping
     let session_grown_tac_total = has_grown_table.then(|| {
         grown_line_heights.iter().sum::<f64>()
-            + fmt.line_spacings.iter().sum::<f64>() + fmt.spacing_before + fmt.spacing_after
+            + fmt.line_spacings.iter().sum::<f64>()
+            + fmt.spacing_before
+            + fmt.spacing_after
     });
     // 실제 TAC 배치가 사용하는 소유 줄 상자는 바깥여백을 이미 포함한다.
     // pre-flush에서 fmt와 여백을 다시 더하면 실제로 들어가는 표를 먼저 이월한다.

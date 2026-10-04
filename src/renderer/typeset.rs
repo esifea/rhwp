@@ -4246,11 +4246,11 @@ impl TypesetEngine {
         // 문서는 불변 (#2237 측정-저장 발산 축과 격리).
         // Determine reflow if measured body height exceeds stored table height
         let reflows_cell_content = !st.profile.native_hwp5_layout()
-                                   && crate::renderer::table_reflows_cell_content(table)
-                                   && crate::renderer::table_row_body_height(&ft.cumulative_heights)
-                                        > hwpunit_to_px(table.common.height as i32, self.dpi) + 0.5;
+            && crate::renderer::table_reflows_cell_content(table)
+            && crate::renderer::table_row_body_height(&ft.cumulative_heights)
+                > hwpunit_to_px(table.common.height as i32, self.dpi) + 0.5;
         let table_height = if (para.line_segs.is_empty() || reflows_cell_content)
-                           && table_height + 0.5 < ft.total_height
+            && table_height + 0.5 < ft.total_height
         {
             ft.total_height
         } else {

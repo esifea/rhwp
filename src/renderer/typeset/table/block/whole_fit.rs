@@ -265,7 +265,8 @@ impl TypesetEngine {
         // Do not trust stored source frame if table's measured height has increased by reflow
         let hwpx_tac_cell_leftover_declared_fits = st.profile.hwpx_stored_layout()
             && !(crate::renderer::table_reflows_cell_content(table)
-                 && crate::renderer::table_row_body_height(&ft.cumulative_heights) > hwpunit_to_px(table.common.height as i32, self.dpi) + 0.5)
+                && crate::renderer::table_row_body_height(&ft.cumulative_heights)
+                    > hwpunit_to_px(table.common.height as i32, self.dpi) + 0.5)
             && table.common.treat_as_char
             && matches!(
                 table.page_break,

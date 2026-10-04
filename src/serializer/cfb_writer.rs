@@ -131,13 +131,18 @@ fn serialize_hwp_inner(
     let retained_memo_tail = doc.sections.iter().any(|section| {
         section.raw_stream.as_deref().is_some_and(|raw| {
             crate::parser::record::Record::read_all(raw).is_ok_and(|records| {
-                records.iter().any(|record| record.tag_id == crate::parser::tags::HWPTAG_MEMO_LIST)
+                records
+                    .iter()
+                    .any(|record| record.tag_id == crate::parser::tags::HWPTAG_MEMO_LIST)
             })
         })
     });
     // Check if memo exists and is modified
     let rebuild_memo_tail = (!memo_lists.is_empty() || retained_memo_tail)
-                            && doc.sections.iter().any(|section| !section.raw_provenance_permits_reuse());
+        && doc
+            .sections
+            .iter()
+            .any(|section| !section.raw_provenance_permits_reuse());
 
     for (section_index, section) in doc.sections.iter().enumerate() {
         let split_starts: Vec<usize> =
@@ -158,7 +163,8 @@ fn serialize_hwp_inner(
                     .collect()
             };
         if split_starts.is_empty() {
-            let prepared = super::form_identity::prepare_section(section, doc, &mut form_id_allocator)?;
+            let prepared =
+                super::form_identity::prepare_section(section, doc, &mut form_id_allocator)?;
             // Add memo tail only at final section
             let memos = rebuild_memo_tail.then(|| {
                 if section_index + 1 == doc.sections.len() {

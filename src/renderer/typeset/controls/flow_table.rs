@@ -100,10 +100,15 @@ pub(in crate::renderer::typeset) fn place(
     // 6. Table is not inline inside paragraph (is a large block)
     let reflowed_block_table = !st.profile.native_hwp5_layout()
         && crate::renderer::table_reflows_cell_content(table)
-        && crate::renderer::table_row_body_height(&ft.cumulative_heights) > hwpunit_to_px(table.common.height as i32, engine.dpi) + 0.5
+        && crate::renderer::table_row_body_height(&ft.cumulative_heights)
+            > hwpunit_to_px(table.common.height as i32, engine.dpi) + 0.5
         && st.current_height + ft.total_height > st.available_height()
         && !matches!(table.page_break, crate::model::table::TablePageBreak::None)
-        && !crate::renderer::height_measurer::is_tac_table_inline_in_para(table, st.host_wrap_column_width_hu(), para);
+        && !crate::renderer::height_measurer::is_tac_table_inline_in_para(
+            table,
+            st.host_wrap_column_width_hu(),
+            para,
+        );
 
     if engine.is_effective_tac_table(para, table, fmt) && !reflowed_block_table {
         engine.typeset_tac_table(

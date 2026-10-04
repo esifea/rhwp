@@ -1627,9 +1627,11 @@ impl DocumentCore {
                 Ok(())
             };
 
-            crate::model::identity::walk::walk(&mut section.paragraphs, project).expect("source cache projection is infallible");
+            crate::model::identity::walk::walk(&mut section.paragraphs, project)
+                .expect("source cache projection is infallible");
             for master in &mut section.section_def.master_pages {
-                crate::model::identity::walk::walk(&mut master.paragraphs, project).expect("source cache projection is infallible");
+                crate::model::identity::walk::walk(&mut master.paragraphs, project)
+                    .expect("source cache projection is infallible");
             }
         }
     }
@@ -3258,11 +3260,15 @@ mod validate_linesegs_tests {
         let hwp_bytes = crate::serializer::body_text::serialize_section(section);
         let hwp_roundtrip = crate::parser::body_text::parse_body_text_section(&hwp_bytes)
             .expect("published Picture-band rows remain serializable as HWP");
-        assert!(hwp_roundtrip.paragraphs[325].line_segs.is_empty(), "rows regenerated from a missing source cache remain layout only");
+        assert!(
+            hwp_roundtrip.paragraphs[325].line_segs.is_empty(),
+            "rows regenerated from a missing source cache remain layout only"
+        );
 
         for paragraph_index in 326..332 {
             assert_eq!(
-                hwp_roundtrip.paragraphs[paragraph_index].line_segs, section.paragraphs[paragraph_index].line_segs,
+                hwp_roundtrip.paragraphs[paragraph_index].line_segs,
+                section.paragraphs[paragraph_index].line_segs,
                 "source-backed Picture-band rows remain serializable"
             );
         }
