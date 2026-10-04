@@ -88,7 +88,9 @@ fn assert_native_persistence(core: &DocumentCore) {
         "native formatting cannot relabel source-backed owner as layout only"
     );
     let before = owner.clone();
-    let saved = core.export_hwp_native().expect("save native formatting result");
+    let saved = core
+        .export_hwp_native()
+        .expect("save native formatting result");
     let raw = rhwp::parse_document(&saved).expect("parse persisted native formatting");
     assert_eq!(
         serde_json::to_value(&raw.sections[0].section_def.page_def).unwrap(),
@@ -105,8 +107,16 @@ fn assert_native_persistence(core: &DocumentCore) {
     assert_eq!(after.char_offsets, before.char_offsets);
     assert_eq!(after.char_count, before.char_count);
     assert_eq!(
-        after.char_shapes.iter().map(|s| (s.start_pos, s.char_shape_id)).collect::<Vec<_>>(),
-        before.char_shapes.iter().map(|s| (s.start_pos, s.char_shape_id)).collect::<Vec<_>>()
+        after
+            .char_shapes
+            .iter()
+            .map(|s| (s.start_pos, s.char_shape_id))
+            .collect::<Vec<_>>(),
+        before
+            .char_shapes
+            .iter()
+            .map(|s| (s.start_pos, s.char_shape_id))
+            .collect::<Vec<_>>()
     );
     assert_eq!(
         loaded.page_count(),
@@ -115,11 +125,15 @@ fn assert_native_persistence(core: &DocumentCore) {
     );
     for page in 0..core.page_count() {
         let expected: serde_json::Value = serde_json::from_str(
-            &core.get_page_text_layout_native(page).expect("native edited paint layout"),
+            &core
+                .get_page_text_layout_native(page)
+                .expect("native edited paint layout"),
         )
         .unwrap();
         let actual: serde_json::Value = serde_json::from_str(
-            &loaded.get_page_text_layout_native(page).expect("native reloaded paint layout"),
+            &loaded
+                .get_page_text_layout_native(page)
+                .expect("native reloaded paint layout"),
         )
         .unwrap();
         assert_eq!(
@@ -137,16 +151,19 @@ fn assert_native_persistence(core: &DocumentCore) {
 #[test]
 fn native_apply_style_keeps_source_rows_through_reflow_and_save() {
     let mut core = native_source();
-    core.apply_style_native(0, 0, 0).expect("apply native style");
+    core.apply_style_native(0, 0, 0)
+        .expect("apply native style");
     assert_native_persistence(&core);
 }
 
 #[test]
 fn native_page_and_column_changes_keep_source_rows_through_section_reflow() {
     let mut core = native_source();
-    core.set_page_def_native(0, r#"{"marginLeft":9000}"#).expect("native page width change");
+    core.set_page_def_native(0, r#"{"marginLeft":9000}"#)
+        .expect("native page width change");
     assert_native_persistence(&core);
-    core.set_column_def_native(0, 2, 0, true, 1000).expect("native column width change");
+    core.set_column_def_native(0, 2, 0, true, 1000)
+        .expect("native column width change");
     assert_native_persistence(&core);
 }
 
@@ -171,7 +188,8 @@ fn unusable_style_box_preserves_metadata_until_successful_reflow() {
     assert_eq!(before.source_line_seg_vertical_pos, Some(vec![77, 999]));
     assert_eq!(before.hwpx_axis_shift, 13);
     assert!(before.stored_text_partition_is_dirty());
-    core.apply_style_native(0, 0, 0).expect("apply style with unusable paragraph box");
+    core.apply_style_native(0, 0, 0)
+        .expect("apply style with unusable paragraph box");
     let after = &core.document().sections[0].paragraphs[0];
     assert!(
         after.line_segs.is_empty(),

@@ -38,22 +38,30 @@ fn annotated(text: &str, index: u32, notes: &[&str]) -> Paragraph {
 }
 
 fn field(para: &Paragraph) -> &Field {
-    para.controls.iter()
+    para.controls
+        .iter()
         .find_map(|control| match control {
             Control::Field(field) => Some(field),
             _ => None,
-        }).expect("memo owner")
+        })
+        .expect("memo owner")
 }
 
 fn assert_memo(para: &Paragraph, index: u32, expected: &[&str]) {
     let memo = field(para);
     assert_eq!(
-        memo.memo_paragraphs.iter().map(|para| para.text.as_str()).collect::<Vec<_>>(),
+        memo.memo_paragraphs
+            .iter()
+            .map(|para| para.text.as_str())
+            .collect::<Vec<_>>(),
         expected
     );
     assert_eq!(memo.memo_index, index);
     assert_eq!(memo.field_id, 100 + index);
-    assert_eq!(memo.command, format!(r"MEMO/65535/{index}/123/456/Synthetic Author/\;;"));
+    assert_eq!(
+        memo.command,
+        format!(r"MEMO/65535/{index}/123/456/Synthetic Author/\;;")
+    );
     assert_eq!(para.field_ranges.len(), 1, "memo anchor range");
     assert_eq!(para.field_ranges[0].start_char_idx, 0);
     assert_eq!(para.field_ranges[0].end_char_idx, para.text.chars().count());
@@ -67,7 +75,8 @@ fn roundtrip(section: &Section) -> Section {
 fn issue_1391_memo_hwp5_top_level_keeps_body_count_and_multiple_empty_notes() {
     let section = Section {
         paragraphs: vec![
-            annotated("본문 대상", 7, &["첫 메모", "", "Third memo"]), paragraph("마지막 본문"),
+            annotated("본문 대상", 7, &["첫 메모", "", "Third memo"]),
+            paragraph("마지막 본문"),
         ],
         ..Default::default()
     };
@@ -75,7 +84,11 @@ fn issue_1391_memo_hwp5_top_level_keeps_body_count_and_multiple_empty_notes() {
 
     assert_memo(&output.paragraphs[0], 7, &["첫 메모", "", "Third memo"]);
 
-    assert_eq!(output.paragraphs.len(), 2, "memo container is not a body paragraph");
+    assert_eq!(
+        output.paragraphs.len(),
+        2,
+        "memo container is not a body paragraph"
+    );
     assert_eq!(output.paragraphs[1].text, "마지막 본문");
 
     let again = roundtrip(&output);
@@ -86,11 +99,15 @@ fn issue_1391_memo_hwp5_top_level_keeps_body_count_and_multiple_empty_notes() {
 
 fn table(paragraphs: Vec<Paragraph>, merged: bool) -> Table {
     let mut table = Table {
-        row_count: 1, col_count: if merged { 2 } else { 1 },
+        row_count: 1,
+        col_count: if merged { 2 } else { 1 },
         cells: vec![Cell {
-            row: 0, col: 0,
-            row_span: 1, col_span: if merged { 2 } else { 1 },
-            width: 14000, height: 6000,
+            row: 0,
+            col: 0,
+            row_span: 1,
+            col_span: if merged { 2 } else { 1 },
+            width: 14000,
+            height: 6000,
             paragraphs,
             ..Default::default()
         }],
@@ -104,11 +121,17 @@ fn table(paragraphs: Vec<Paragraph>, merged: bool) -> Table {
 
 #[test]
 fn issue_1391_memo_hwp5_nested_merged_table_keeps_owners() {
-    let inner = table(vec![annotated("안쪽 대상", 12, &["안쪽 메모", "둘째 줄"])], false);
+    let inner = table(
+        vec![annotated("안쪽 대상", 12, &["안쪽 메모", "둘째 줄"])],
+        false,
+    );
     let mut nested = paragraph("");
     nested.controls.push(Control::Table(Box::new(inner)));
 
-    let outer = table(vec![annotated("병합 대상", 11, &["병합 메모"]), nested], true);
+    let outer = table(
+        vec![annotated("병합 대상", 11, &["병합 메모"]), nested],
+        true,
+    );
     let mut body = paragraph("");
     body.controls.push(Control::Table(Box::new(outer)));
 
@@ -134,7 +157,11 @@ fn issue_1391_memo_hwp5_nested_merged_table_keeps_owners() {
 #[test]
 fn issue_1391_memo_hwp5_to_hwpx_keeps_native_memo_body_and_metadata() {
     let section = Section {
-        paragraphs: vec![annotated("메모 위치", 4, &["한글 주석", "Second annotation", ""])],
+        paragraphs: vec![annotated(
+            "메모 위치",
+            4,
+            &["한글 주석", "Second annotation", ""],
+        )],
         ..Default::default()
     };
     let output = roundtrip(&section);
@@ -146,12 +173,20 @@ fn issue_1391_memo_hwp5_to_hwpx_keeps_native_memo_body_and_metadata() {
     let hwpx = rhwp::serializer::serialize_hwpx(&document).expect("serialize HWPX");
     let parsed = rhwp::parser::hwpx::parse_hwpx(&hwpx).expect("parse HWPX");
 
-    assert_memo(&parsed.sections[0].paragraphs[0], 4, &["한글 주석", "Second annotation", ""]);
+    assert_memo(
+        &parsed.sections[0].paragraphs[0],
+        4,
+        &["한글 주석", "Second annotation", ""],
+    );
     assert_eq!(parsed.sections[0].paragraphs.len(), 1);
 
     let memo = field(&parsed.sections[0].paragraphs[0]);
     assert_eq!(memo.field_type, FieldType::Memo);
-    assert!(memo.raw_parameters_xml.as_deref().unwrap().contains("Synthetic Author"));
+    assert!(memo
+        .raw_parameters_xml
+        .as_deref()
+        .unwrap()
+        .contains("Synthetic Author"));
 }
 
 #[test]
@@ -200,10 +235,26 @@ fn issue_1391_memo_hwp5_document_final_tail_links_to_earlier_section() {
     assert_memo(&parsed.sections[0].paragraphs[0], 21, &["앞 구역 주석"]);
     assert_memo(&parsed.sections[1].paragraphs[0], 22, &["뒤 구역 주석", ""]);
 
-    let first_records = rhwp::parser::record::Record::read_all(parsed.sections[0].raw_stream.as_deref().unwrap()).unwrap();
-    let final_records = rhwp::parser::record::Record::read_all(parsed.sections[1].raw_stream.as_deref().unwrap()).unwrap();
-    assert_eq!(first_records.iter().filter(|r| r.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST).count(), 0);
-    assert_eq!(final_records.iter().filter(|r| r.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST).count(), 2);
+    let first_records =
+        rhwp::parser::record::Record::read_all(parsed.sections[0].raw_stream.as_deref().unwrap())
+            .unwrap();
+    let final_records =
+        rhwp::parser::record::Record::read_all(parsed.sections[1].raw_stream.as_deref().unwrap())
+            .unwrap();
+    assert_eq!(
+        first_records
+            .iter()
+            .filter(|r| r.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST)
+            .count(),
+        0
+    );
+    assert_eq!(
+        final_records
+            .iter()
+            .filter(|r| r.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST)
+            .count(),
+        2
+    );
 
     let mut edited = parsed;
     edited.sections[0].paragraphs[0].text = "앞 구역 변경".into();
@@ -211,7 +262,11 @@ fn issue_1391_memo_hwp5_document_final_tail_links_to_earlier_section() {
     let saved = rhwp::serializer::serialize_hwp(&edited).expect("save native HWP edit");
     let reparsed = rhwp::parse_document(&saved).expect("parse native edit");
     assert_memo(&reparsed.sections[0].paragraphs[0], 21, &["앞 구역 주석"]);
-    assert_memo(&reparsed.sections[1].paragraphs[0], 22, &["뒤 구역 주석", ""]);
+    assert_memo(
+        &reparsed.sections[1].paragraphs[0],
+        22,
+        &["뒤 구역 주석", ""],
+    );
     assert_eq!(reparsed.sections[0].paragraphs[0].text, "앞 구역 변경");
 }
 
@@ -230,7 +285,10 @@ fn issue_1391_memo_hwp5_empty_list_and_vertical_direction_roundtrip() {
     let parsed = roundtrip(&section);
     assert_eq!(parsed.paragraphs.len(), 2);
     assert_memo(&parsed.paragraphs[0], 31, &["세로 주석"]);
-    assert_eq!(field(&parsed.paragraphs[0]).memo_text_direction.as_deref(), Some("VERTICAL"));
+    assert_eq!(
+        field(&parsed.paragraphs[0]).memo_text_direction.as_deref(),
+        Some("VERTICAL")
+    );
     assert_memo(&parsed.paragraphs[1], 32, &[]);
 }
 
@@ -241,11 +299,17 @@ fn issue_1391_memo_hwp5_incomplete_list_is_not_silently_discarded() {
         ..Default::default()
     };
     let mut records = rhwp::parser::record::Record::read_all(&serialize_section(&section)).unwrap();
-    let header = records.iter_mut().find(|r| r.tag_id == rhwp::parser::tags::HWPTAG_LIST_HEADER && r.level == 1).unwrap();
+    let header = records
+        .iter_mut()
+        .find(|r| r.tag_id == rhwp::parser::tags::HWPTAG_LIST_HEADER && r.level == 1)
+        .unwrap();
     header.data[..4].copy_from_slice(&2_u32.to_le_bytes());
 
     let malformed = rhwp::serializer::record_writer::write_records(&records);
-    assert!(parse_body_text_section(&malformed).is_err(), "declared memo paragraph cannot disappear");
+    assert!(
+        parse_body_text_section(&malformed).is_err(),
+        "declared memo paragraph cannot disappear"
+    );
 }
 
 #[test]
@@ -255,11 +319,17 @@ fn issue_1391_memo_hwp5_extra_paragraph_is_not_silently_discarded() {
         ..Default::default()
     };
     let mut records = rhwp::parser::record::Record::read_all(&serialize_section(&section)).unwrap();
-    let header = records.iter_mut().find(|r| r.tag_id == rhwp::parser::tags::HWPTAG_LIST_HEADER && r.level == 1).unwrap();
+    let header = records
+        .iter_mut()
+        .find(|r| r.tag_id == rhwp::parser::tags::HWPTAG_LIST_HEADER && r.level == 1)
+        .unwrap();
     header.data[..4].copy_from_slice(&0_u32.to_le_bytes());
 
     let malformed = rhwp::serializer::record_writer::write_records(&records);
-    assert!(parse_body_text_section(&malformed).is_err(),"undeclared memo paragraph cannot disappear");
+    assert!(
+        parse_body_text_section(&malformed).is_err(),
+        "undeclared memo paragraph cannot disappear"
+    );
 }
 
 #[test]
@@ -269,11 +339,17 @@ fn issue_1391_memo_hwp5_wrong_list_level_is_rejected() {
         ..Default::default()
     };
     let mut records = rhwp::parser::record::Record::read_all(&serialize_section(&section)).unwrap();
-    let memo = records.iter_mut().find(|r| r.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST).unwrap();
+    let memo = records
+        .iter_mut()
+        .find(|r| r.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST)
+        .unwrap();
     memo.level = 2;
 
     let malformed = rhwp::serializer::record_writer::write_records(&records);
-    assert!(parse_body_text_section(&malformed).is_err(), "memo tail must have native section ownership");
+    assert!(
+        parse_body_text_section(&malformed).is_err(),
+        "memo tail must have native section ownership"
+    );
 }
 
 #[test]
@@ -301,8 +377,14 @@ fn issue_1391_memo_hwp5_begin_marker_owns_arbitrary_command_not_unknown_bit15() 
     assert_eq!(field(&parsed.paragraphs[0]).field_type, FieldType::Unknown);
     assert!(field(&parsed.paragraphs[0]).memo_paragraphs.is_empty());
     assert_eq!(field(&parsed.paragraphs[1]).field_type, FieldType::Memo);
-    assert_eq!(field(&parsed.paragraphs[1]).command, "Arbitrary memo command");
-    assert_eq!(field(&parsed.paragraphs[1]).memo_paragraphs[0].text, "명확한 메모 소유권");
+    assert_eq!(
+        field(&parsed.paragraphs[1]).command,
+        "Arbitrary memo command"
+    );
+    assert_eq!(
+        field(&parsed.paragraphs[1]).memo_paragraphs[0].text,
+        "명확한 메모 소유권"
+    );
 
     let mut document = Document::default();
     document.doc_info.char_shapes = vec![Default::default()];
@@ -311,7 +393,10 @@ fn issue_1391_memo_hwp5_begin_marker_owns_arbitrary_command_not_unknown_bit15() 
 
     let native = rhwp::serializer::serialize_hwp(&document).expect("serialize anonymous memo HWP");
     let reloaded = rhwp::parse_document(&native).expect("reload anonymous memo HWP");
-    assert_eq!(field(&reloaded.sections[0].paragraphs[1]).memo_paragraphs[0].text, "명확한 메모 소유권");
+    assert_eq!(
+        field(&reloaded.sections[0].paragraphs[1]).memo_paragraphs[0].text,
+        "명확한 메모 소유권"
+    );
 }
 
 fn native_document(sections: Vec<Section>) -> Document {
@@ -322,14 +407,20 @@ fn native_document(sections: Vec<Section>) -> Document {
     document
 }
 
-fn native_memo_metadata_fixture(header_suffix: &[u8], line_segs: &[LineSeg], nested: bool) -> (Vec<u8>, Vec<u8>) {
+fn native_memo_metadata_fixture(
+    header_suffix: &[u8],
+    line_segs: &[LineSeg],
+    nested: bool,
+) -> (Vec<u8>, Vec<u8>) {
     use rhwp::parser::record::Record;
     use rhwp::parser::tags;
 
     let owner = annotated("Native memo owner", 61, &["Native memo"]);
     let body = if nested {
         let mut outer = paragraph("Table owner");
-        outer.controls.push(Control::Table(Box::new(table(vec![owner], true))));
+        outer
+            .controls
+            .push(Control::Table(Box::new(table(vec![owner], true))));
         outer
     } else {
         owner
@@ -338,12 +429,20 @@ fn native_memo_metadata_fixture(header_suffix: &[u8], line_segs: &[LineSeg], nes
         paragraphs: vec![body],
         ..Default::default()
     };
-    let original = rhwp::serializer::serialize_hwp(&native_document(vec![section.clone()])).unwrap();
+    let original =
+        rhwp::serializer::serialize_hwp(&native_document(vec![section.clone()])).unwrap();
     let mut records = Record::read_all(&serialize_section(&section)).unwrap();
-    let memo = records.iter().position(|record| record.tag_id == tags::HWPTAG_MEMO_LIST).unwrap();
-    let header = records.iter().enumerate().skip(memo + 1)
+    let memo = records
+        .iter()
+        .position(|record| record.tag_id == tags::HWPTAG_MEMO_LIST)
+        .unwrap();
+    let header = records
+        .iter()
+        .enumerate()
+        .skip(memo + 1)
         .find(|(_, record)| record.tag_id == tags::HWPTAG_PARA_HEADER && record.level == 1)
-        .map(|(index, _)| index).unwrap();
+        .map(|(index, _)| index)
+        .unwrap();
     let mut extra = Vec::new();
     extra.extend_from_slice(&1_u16.to_le_bytes()); // one character shape
     extra.extend_from_slice(&0_u16.to_le_bytes()); // no range tags
@@ -372,7 +471,11 @@ fn native_memo_metadata_fixture(header_suffix: &[u8], line_segs: &[LineSeg], nes
             rows.extend_from_slice(&seg.tag.to_le_bytes());
         }
 
-        let end = records.iter().enumerate().skip(header + 1).find(|(_, record)| record.level <= 1)
+        let end = records
+            .iter()
+            .enumerate()
+            .skip(header + 1)
+            .find(|(_, record)| record.level <= 1)
             .map_or(records.len(), |(index, _)| index);
         records.insert(
             end,
@@ -409,7 +512,8 @@ fn issue_1391_memo_hwp5_forced_rebuild_preserves_native_header_tails() {
         let (bytes, expected) = native_memo_metadata_fixture(&suffix, &[], false);
         let native = rhwp::parse_document(&bytes).unwrap();
         assert_eq!(
-            field(&native.sections[0].paragraphs[0]).memo_paragraphs[0].raw_header_extra, expected,
+            field(&native.sections[0].paragraphs[0]).memo_paragraphs[0].raw_header_extra,
+            expected,
             "independent native record fixture"
         );
 
@@ -421,7 +525,8 @@ fn issue_1391_memo_hwp5_forced_rebuild_preserves_native_header_tails() {
 
         let again = forced_rebuild(&rebuilt);
         assert_eq!(
-            field(&again.sections[0].paragraphs[0]).memo_paragraphs[0].raw_header_extra, expected,
+            field(&again.sections[0].paragraphs[0]).memo_paragraphs[0].raw_header_extra,
+            expected,
             "repeated forced rebuild"
         );
     }
@@ -448,7 +553,8 @@ fn issue_1391_memo_hwp5_forced_rebuild_preserves_nested_native_line_segments() {
             ..row
         },
     ];
-    let (bytes, expected_header) = native_memo_metadata_fixture(&[0x78, 0x56, 0x34, 0x12, 0x9a, 0xbc], &rows, true);
+    let (bytes, expected_header) =
+        native_memo_metadata_fixture(&[0x78, 0x56, 0x34, 0x12, 0x9a, 0xbc], &rows, true);
     let native = rhwp::parse_document(&bytes).unwrap();
     let Control::Table(original_table) = &native.sections[0].paragraphs[0].controls[0] else {
         panic!("native table owner");
@@ -466,7 +572,11 @@ fn issue_1391_memo_hwp5_forced_rebuild_preserves_nested_native_line_segments() {
     let memo = &field(&rebuilt_table.cells[0].paragraphs[0]).memo_paragraphs[0];
     assert_eq!(memo.text, "Native memo");
     assert_eq!(memo.raw_header_extra, expected_header);
-    assert_eq!(serde_json::to_value(&memo.line_segs).unwrap(), serde_json::to_value(&rows).unwrap(), "all native row metrics survive");
+    assert_eq!(
+        serde_json::to_value(&memo.line_segs).unwrap(),
+        serde_json::to_value(&rows).unwrap(),
+        "all native row metrics survive"
+    );
 }
 
 #[test]
@@ -490,12 +600,18 @@ fn issue_1391_memo_hwp5_last_memo_deletion_removes_unchanged_final_tail() {
     let reparsed = rhwp::parse_document(&saved).expect("last memo deletion must remain parseable");
     assert_eq!(reparsed.sections.len(), 2);
     assert_eq!(reparsed.sections[1].paragraphs.len(), 1);
-    assert_eq!(reparsed.sections[1].paragraphs[0].text, "Untouched final body");
+    assert_eq!(
+        reparsed.sections[1].paragraphs[0].text,
+        "Untouched final body"
+    );
     assert!(reparsed.sections[0].paragraphs[0].controls.is_empty());
 
     for section in &reparsed.sections {
-        let records = rhwp::parser::record::Record::read_all(section.raw_stream.as_deref().unwrap()).unwrap();
-        assert!(records.iter().all(|record| record.tag_id != rhwp::parser::tags::HWPTAG_MEMO_LIST));
+        let records =
+            rhwp::parser::record::Record::read_all(section.raw_stream.as_deref().unwrap()).unwrap();
+        assert!(records
+            .iter()
+            .all(|record| record.tag_id != rhwp::parser::tags::HWPTAG_MEMO_LIST));
     }
 }
 
@@ -519,10 +635,13 @@ fn issue_1391_memo_hwp5_native_blank_final_body_keeps_style_and_line_position() 
     };
     let records = rhwp::parser::record::Record::read_all(&serialize_section(&section)).unwrap();
     assert_eq!(
-        records.iter()
+        records
+            .iter()
             .filter(|record| {
                 record.tag_id == rhwp::parser::tags::HWPTAG_PARA_HEADER && record.level == 0
-            }).count(), 2,
+            })
+            .count(),
+        2,
         "memo tail must attach to the two real body paragraphs"
     );
 
@@ -549,16 +668,25 @@ fn replace_section_stream(original: &[u8], section: &[u8]) -> Vec<u8> {
     use std::io::{Cursor, Read, Write};
     let mut container = cfb::CompoundFile::open(Cursor::new(original.to_vec())).unwrap();
     let mut header = Vec::new();
-    container.open_stream("/FileHeader").unwrap().read_to_end(&mut header).unwrap();
+    container
+        .open_stream("/FileHeader")
+        .unwrap()
+        .read_to_end(&mut header)
+        .unwrap();
 
     let payload = if header[36] & 1 != 0 {
-        let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(section).unwrap();
         encoder.finish().unwrap()
     } else {
         section.to_vec()
     };
-    container.create_stream("/BodyText/Section0").unwrap().write_all(&payload).unwrap();
+    container
+        .create_stream("/BodyText/Section0")
+        .unwrap()
+        .write_all(&payload)
+        .unwrap();
     container.into_inner().into_inner()
 }
 
@@ -576,7 +704,8 @@ fn lenient_fixture(data: &[u8]) -> Vec<u8> {
             let offset = fat + index * 4;
             let next = u32::from_le_bytes(result[offset..offset + 4].try_into().unwrap());
             (next < sectors as u32).then_some(next)
-        }).expect("live FAT pointee");
+        })
+        .expect("live FAT pointee");
     let offset = fat + sectors * 4;
     result[offset..offset + 4].copy_from_slice(&target.to_le_bytes());
     assert!(rhwp::parser::cfb_reader::CfbReader::open(&result).is_err());
@@ -595,26 +724,51 @@ fn issue_1391_memo_hwp5_truncated_framing_fails_strict_and_lenient_document_open
         ..Default::default()
     }]);
     let valid = rhwp::serializer::serialize_hwp(&document).unwrap();
-    let records = rhwp::parser::record::Record::read_all(&serialize_section(&document.sections[0])).unwrap();
-    let memo = records.iter().position(|record| record.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST).unwrap();
+    let records =
+        rhwp::parser::record::Record::read_all(&serialize_section(&document.sections[0])).unwrap();
+    let memo = records
+        .iter()
+        .position(|record| record.tag_id == rhwp::parser::tags::HWPTAG_MEMO_LIST)
+        .unwrap();
     let prefix = rhwp::serializer::record_writer::write_records(&records[..memo]);
     let memo_header = u32::from(rhwp::parser::tags::HWPTAG_MEMO_LIST) | (1 << 10);
     let variants = [
-        [(memo_header | (4 << 20)).to_le_bytes().as_slice(), &7_u16.to_le_bytes()].concat(),
-        [(memo_header | (0xfff << 20)).to_le_bytes().as_slice(), &4_u16.to_le_bytes()].concat(),
+        [
+            (memo_header | (4 << 20)).to_le_bytes().as_slice(),
+            &7_u16.to_le_bytes(),
+        ]
+        .concat(),
+        [
+            (memo_header | (0xfff << 20)).to_le_bytes().as_slice(),
+            &4_u16.to_le_bytes(),
+        ]
+        .concat(),
         memo_header.to_le_bytes()[..2].to_vec(),
-        [(memo_header | (4 << 20)).to_le_bytes().as_slice(), &7_u32.to_le_bytes()].concat(),
+        [
+            (memo_header | (4 << 20)).to_le_bytes().as_slice(),
+            &7_u32.to_le_bytes(),
+        ]
+        .concat(),
     ];
 
     for (index, tail) in variants.iter().enumerate() {
         let section = [prefix.as_slice(), tail.as_slice()].concat();
-        assert!(matches!(parse_body_text_section(&section), Err(rhwp::parser::body_text::BodyTextError::MemoStructure(_))));
+        assert!(matches!(
+            parse_body_text_section(&section),
+            Err(rhwp::parser::body_text::BodyTextError::MemoStructure(_))
+        ));
 
         let malformed = replace_section_stream(&valid, &section);
-        assert!(rhwp::parse_document(&malformed).is_err(), "strict memo framing variant {index}");
+        assert!(
+            rhwp::parse_document(&malformed).is_err(),
+            "strict memo framing variant {index}"
+        );
 
         let lenient = lenient_fixture(&malformed);
-        assert!(rhwp::parse_document(&lenient).is_err(), "lenient memo framing variant {index}");
+        assert!(
+            rhwp::parse_document(&lenient).is_err(),
+            "lenient memo framing variant {index}"
+        );
     }
 }
 
@@ -635,9 +789,13 @@ fn issue_1391_memo_hwp5_duplicate_default_indexes_across_sections_keep_owners_an
     assert_memo(&parsed.sections[0].paragraphs[0], 0, &["First memo"]);
     assert_memo(&parsed.sections[1].paragraphs[0], 0, &["Second memo"]);
 
-    let unchanged = rhwp::parse_document(&rhwp::serializer::serialize_hwp(&parsed).unwrap()).unwrap();
+    let unchanged =
+        rhwp::parse_document(&rhwp::serializer::serialize_hwp(&parsed).unwrap()).unwrap();
     for (before, after) in parsed.sections.iter().zip(&unchanged.sections) {
-        assert_eq!(before.raw_stream, after.raw_stream, "unchanged native section passthrough");
+        assert_eq!(
+            before.raw_stream, after.raw_stream,
+            "unchanged native section passthrough"
+        );
     }
 
     let Control::Field(memo) = &mut parsed.sections[0].paragraphs[0].controls[0] else {

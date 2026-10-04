@@ -10,7 +10,8 @@ use rhwp::model::paragraph::{CharShapeRef, LineSeg, Paragraph};
 use rhwp::model::table::{Cell, Table, TablePageBreak};
 use rhwp::renderer::render_tree::{PageRenderTree, RenderNode, RenderNodeType};
 
-const EDIT: &str = "Long wrapped synthetic content Long wrapped synthetic content Long wrapped synthetic content";
+const EDIT: &str =
+    "Long wrapped synthetic content Long wrapped synthetic content Long wrapped synthetic content";
 const AFTER: &str = "Following body marker";
 const DPI: f64 = 96.0;
 
@@ -212,8 +213,10 @@ fn assert_geometry(source: &Document, core: &DocumentCore, require_body_bounds: 
     let mut table_positions = Vec::new();
     let mut table_height = 0.0;
     let body_bottom = f64::from(
-        source.sections[0].section_def.page_def.height - source.sections[0].section_def.page_def.margin_bottom,
-    ) * DPI / 7200.0;
+        source.sections[0].section_def.page_def.height
+            - source.sections[0].section_def.page_def.margin_bottom,
+    ) * DPI
+        / 7200.0;
     for (page, tree) in trees(core).iter().enumerate() {
         let mut nodes = Vec::new();
         visit(&tree.root, &mut nodes);
@@ -423,14 +426,16 @@ fn grid(row_heights: &[u32], height: u32, state: impl Fn(u16, u16) -> Text) -> D
     let mut saved = true;
     for (row, &row_height) in (0..rows).zip(row_heights) {
         for col in 0..2 {
-           let content = match state(row, col) {
+            let content = match state(row, col) {
                 Text::Cached(text) => paragraph(text, true),
                 Text::Fresh(text) => {
                     saved = false;
                     paragraph(text, false)
                 }
             };
-            table.cells.push(cell_at(row, col, 15000, row_height, content));
+            table
+                .cells
+                .push(cell_at(row, col, 15000, row_height, content));
         }
     }
     table.rebuild_grid();
@@ -441,25 +446,38 @@ fn grid(row_heights: &[u32], height: u32, state: impl Fn(u16, u16) -> Text) -> D
 /// Its 4200HU table frame is shorter than the fresh nested content plus padding.
 fn nested_fixture() -> Document {
     let mut inner = shell(1, 1, 15000, 3600, TablePageBreak::None);
-    inner.cells.push(cell_at(0, 0, 15000, 3600, paragraph(EDIT, false)));
+    inner
+        .cells
+        .push(cell_at(0, 0, 15000, 3600, paragraph(EDIT, false)));
     inner.rebuild_grid();
 
     let mut outer = shell(1, 2, 32000, 4200, TablePageBreak::None);
-    outer.cells.push(cell_at(0, 0, 16000, 5000, host(inner, true)));
-    outer.cells.push(cell_at(0, 1, 16000, 5000, paragraph("Outer label", true)));
+    outer
+        .cells
+        .push(cell_at(0, 0, 16000, 5000, host(inner, true)));
+    outer
+        .cells
+        .push(cell_at(0, 1, 16000, 5000, paragraph("Outer label", true)));
     outer.rebuild_grid();
     document(vec![host(outer, false), paragraph(AFTER, true)], false)
 }
 
 fn long_text() -> String {
-    (1..=200).map(|n| format!("segment{n:03}")).collect::<Vec<_>>().join(" ")
+    (1..=200)
+        .map(|n| format!("segment{n:03}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// One saved label and one fresh cell far taller than the small page body.
 fn long_cell_fixture() -> Document {
     let mut table = shell(1, 2, 30000, 1800, TablePageBreak::CellBreak);
-    table.cells.push(cell_at(0, 0, 15000, 1800, paragraph("Label0", true)));
-    table.cells.push(cell_at(0, 1, 15000, 1800, paragraph(&long_text(), false)));
+    table
+        .cells
+        .push(cell_at(0, 0, 15000, 1800, paragraph("Label0", true)));
+    table
+        .cells
+        .push(cell_at(0, 1, 15000, 1800, paragraph(&long_text(), false)));
     table.rebuild_grid();
     document(vec![host(table, false), paragraph(AFTER, true)], true)
 }
