@@ -174,6 +174,33 @@ fn try_compose_lines<S: crate::storage::Storage>(
                 .take(text_end - text_start),
         )?;
 
+        if has_generated_tac_host_rows(para) {
+            // Published rows already own their line breaking.
+            let has_break = line_text.ends_with('\n');
+            let content = line_text.strip_suffix('\n').unwrap_or(&line_text);
+            storage.push(
+                &mut lines,
+                ComposedLine {
+                    runs: try_split_by_char_shapes(
+                        content,
+                        text_start,
+                        text_end.saturating_sub(usize::from(has_break)),
+                        &para.char_offsets,
+                        &para.char_shapes,
+                        storage,
+                    )?,
+                    line_height: line_seg.line_height,
+                    baseline_distance: line_seg.baseline_distance,
+                    segment_width: line_seg.segment_width,
+                    column_start: line_seg.column_start,
+                    line_spacing: line_seg.line_spacing,
+                    has_line_break: has_break,
+                    char_start: text_start,
+                },
+            )?;
+            continue;
+        }
+
         // TAC 표 문단 감지
         let has_tac = para.controls.iter().any(
             |c| matches!(c, crate::model::control::Control::Table(t) if t.common.treat_as_char),
@@ -831,9 +858,10 @@ pub(crate) fn control_slot_line_index_with_storage<S: crate::storage::Storage>(
 ) -> Result<Option<usize>, S::Error> {
     if !para.stored_text_partition_is_dirty()
         && !para.cell_format_vpos_dirty
-        && para.line_segs.first().is_some_and(|seg| {
-            seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
-        })
+        && para
+            .line_segs
+            .first()
+            .is_some_and(|seg| seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0)
     {
         if let Some(slot) = para.empty_control_stream_position(control_index) {
             return Ok((0..para.line_segs.len())

@@ -11640,7 +11640,11 @@ impl LayoutEngine {
                         crate::renderer::composer::composed_tac_line_assignment(para, comp)
                             .is_some()
                     });
-                    if has_inline_tables && !has_other_inline_ctrls && !has_composed_tac_rows {
+                    if has_inline_tables
+                        && !has_other_inline_ctrls
+                        && !has_composed_tac_rows
+                        && !crate::renderer::composer::has_generated_tac_host_rows(para)
+                    {
                         // 인라인 표 문단도 번호 카운터 전진 필요
                         self.apply_paragraph_numbering(
                             composed.get(*para_index),
@@ -17086,6 +17090,16 @@ impl LayoutEngine {
 /// 복학원서는 한컴이 표 폭만큼 필러(U+F081C)를 채워 줄바꿈시킨 형상이라 표가 첫 줄
 /// 안에 있고, `#1195` 로 보정된 leading 축이 그대로 유효하다.
 fn stored_ladder_gives_tac_table_its_own_line(para: &Paragraph, control_index: usize) -> bool {
+    if let Some(owner) = control_line_seg_index(para, control_index) {
+        if para.line_segs[owner].column_start == 0
+            && para
+                .control_utf16_positions()
+                .get(control_index)
+                .is_some_and(|&raw| para.line_seg_text_start(owner) == raw)
+        {
+            return true;
+        }
+    }
     let Some(&ctrl_pos) = para.control_text_positions().get(control_index) else {
         return false;
     };

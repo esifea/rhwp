@@ -35,6 +35,9 @@ pub(in crate::renderer::typeset) fn table_line_index(
     fmt: &FormattedParagraph,
     flow: &TacFlowQuery<'_>,
 ) -> usize {
+    if crate::renderer::composer::has_generated_tac_host_rows(para) {
+        return crate::renderer::layout::control_line_seg_index(para, control_index).unwrap_or(0);
+    }
     if tac_count <= 1 {
         return flow.tac_table_line_index(para, table, fmt).unwrap_or(0);
     }
