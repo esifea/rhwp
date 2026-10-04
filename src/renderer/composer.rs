@@ -1222,6 +1222,30 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
             .take(text_end - text_start)
             .collect();
 
+        if has_generated_tac_host_rows(para) {
+            // Published rows already own their line breaking
+            let has_break = line_text.ends_with('\n');
+            // Pure texts exclude line-breaking char '\n'
+            let content = line_text.strip_suffix('\n').unwrap_or(&line_text);
+            lines.push(ComposedLine {
+                runs: split_by_char_shapes(
+                    content,
+                    text_start,
+                    text_end.saturating_sub(usize::from(has_break)),
+                    &para.char_offsets,
+                    &para.char_shapes,
+                ),
+                line_height: line_seg.line_height,
+                baseline_distance: line_seg.baseline_distance,
+                segment_width: line_seg.segment_width,
+                column_start: line_seg.column_start,
+                line_spacing: line_seg.line_spacing,
+                has_line_break: has_break,
+                char_start: text_start,
+            });
+            continue;
+        }
+
         // TAC 표 문단 감지
         let has_tac = para.controls.iter().any(
             |c| matches!(c, crate::model::control::Control::Table(t) if t.common.treat_as_char),
@@ -4337,6 +4361,7 @@ pub(crate) use line_breaking::{
     paragraph_flow_end, recalculate_section_vpos, reflow_line_segs,
     reflow_line_segs_after_cell_split, reflow_line_segs_after_cell_text_edit,
     reflow_line_segs_in_stored_section, tokenize_paragraph, BreakToken, StoredRowMissPolicy,
+    has_generated_tac_host_rows, supports_cache_free_tac_host,
 };
 
 #[cfg(test)]

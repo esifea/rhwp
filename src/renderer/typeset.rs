@@ -5497,6 +5497,10 @@ impl TypesetEngine {
     /// 문단에 블록 표 컨트롤이 있는지 감지
     fn paragraph_has_table(&self, para: &Paragraph) -> bool {
         use crate::renderer::height_measurer::is_tac_table_inline_in_para;
+        // Generated hosts already own their text and objects in physical rows
+        if crate::renderer::composer::has_generated_tac_host_rows(para) {
+            return false;
+        }
         let seg_width = para.line_segs.first().map(|s| s.segment_width).unwrap_or(0);
         para.controls.iter().any(|c| {
             matches!(c, Control::Table(t) if t.attr & 0x01 == 0

@@ -82,7 +82,9 @@ pub(in crate::renderer::typeset) fn format_paragraph_for_flow(
     // `lineseg` 를 그대로 쓰므로 여기서 또 더하면 이중 가산이 되어, 분할 표 꼬리가 페이지를
     // 단독 점유하고 뒤 본문이 밀린다(#2373 핀: 한글 2022 정답지 4쪽 ↔ 가산 시 5쪽).
     // 다시 조판해야 하는 문단(붙여넣기·생성계)에서만 이 몫이 실제로 빠져 있다.
-    let tac_outer_margin_v_px: f64 = if crate::renderer::para_has_no_stored_line_segs(para) {
+    let tac_outer_margin_v_px: f64 = if crate::renderer::para_has_no_stored_line_segs(para)
+                                        && !crate::renderer::composer::has_generated_tac_host_rows(para)
+    {
         para.controls
             .iter()
             .filter_map(|ctrl| match ctrl {

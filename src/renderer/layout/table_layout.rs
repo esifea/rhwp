@@ -22,6 +22,66 @@ use crate::renderer::float_placement::{
     topbottom_float_outer_margin_left_hu, topbottom_flow_vertical_offset_hu,
 };
 
+/// Complete inline frame, including caption extents and row growth
+pub(crate) struct AtomicTacTableOccupancy {
+    pub(crate) row_heights: Vec<f64>,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+    pub(crate) baseline: f64,
+}
+
+pub(crate) fn atomic_tac_table_occupancy(
+    table: &crate::model::table::Table,
+    styles: &ResolvedStyleSet,
+    dpi: f64,
+) -> AtomicTacTableOccupancy {
+    let engine = super::LayoutEngine::new(dpi);
+    let row_heights = engine.resolve_row_heights(
+        table,
+        table.col_count as usize,
+        table.row_count as usize,
+        None,
+        styles,
+        true,
+    );
+    let frame_height = row_heights.iter().sum::<f64>()
+                       + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
+                         * row_heights.len().saturating_sub(1) as f64;
+    let mut width = super::hwpunit_to_px(table.flow_width_hu() as i32, dpi)
+                    + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
+                      * table.col_count.saturating_sub(1) as f64;
+    let mut height = frame_height;
+    let mut baseline = frame_height * 0.85;
+    let caption_height = crate::renderer::composer::caption_height_px(&table.caption, dpi);
+    if let Some(caption) = table.caption.as_ref() {
+        let spacing = super::hwpunit_to_px(caption.spacing as i32, dpi);
+        use crate::model::shape::CaptionDirection;
+
+        // Readjust considering caption
+        match caption.direction {
+            CaptionDirection::Top if caption_height > 0.0 => {
+                height += caption_height + spacing;
+                baseline += caption_height + spacing;
+            }
+            CaptionDirection::Bottom if caption_height > 0.0 => {
+                height += caption_height + spacing;
+            }
+            CaptionDirection::Left | CaptionDirection::Right => {
+                width += super::hwpunit_to_px(caption.width as i32, dpi) + spacing;
+                height = height.max(caption_height);
+            }
+            _ => {}
+        }
+    }
+
+    AtomicTacTableOccupancy {
+        row_heights,
+        width,
+        height,
+        baseline,
+    }
+}
+
 const ROWBREAK_OBJECT_BOTTOM_BLEED_TOLERANCE_PX: f64 = 64.0;
 /// [#3738 Stage 19] native HWP5가 빈 1×1 RowBreak picture table에 남기는 stale page
 /// origin은 일반적인 local offset보다 한 페이지 단위로 크다. 이 값보다 작은 음수는
@@ -2700,6 +2760,57 @@ impl LayoutEngine {
             resolved_table_origin,
             host_char_border_fill_id,
             false,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn layout_atomic_tac_table(
+        &self,
+        tree: &mut PageLayoutContext,
+        col_node: &mut RenderNode,
+        table: &crate::model::table::Table,
+        section_index: usize,
+        styles: &ResolvedStyleSet,
+        col_area: &LayoutRect,
+        y_start: f64,
+        bin_data_content: &[BinDataContent],
+        depth: usize,
+        table_meta: (usize, usize),
+        host_alignment: Alignment,
+        enclosing_cell_ctx: Option<CellContext>,
+        inline_x: f64,
+        host_char_border_fill_id: TableCharBorder,
+        occupancy: &AtomicTacTableOccupancy,
+    ) -> f64 {
+        self.layout_table_with_wrapper_margin(
+            tree,
+            col_node,
+            table,
+            section_index,
+            styles,
+            0,
+            col_area,
+            y_start,
+            bin_data_content,
+            None,
+            depth,
+            Some(table_meta),
+            host_alignment,
+            enclosing_cell_ctx,
+            0.0,
+            0.0,
+            Some(inline_x),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            None,
+            host_char_border_fill_id,
+            false,
+            Some(&occupancy.row_heights),
         )
     }
 
@@ -2732,6 +2843,7 @@ impl LayoutEngine {
         resolved_table_origin: Option<(Option<f64>, f64)>,
         host_char_border_fill_id: TableCharBorder,
         wrapper_margin_already_applied: bool,
+        atomic_rows: Option<&[f64]>,
     ) -> f64 {
         // [#6929] 진입 시점의 단 상태 — 이후 이 함수가 자식을 붙이므로 먼저 찍어 둔다.
         let column_is_empty_on_entry = col_node.children.is_empty();
@@ -2965,6 +3077,7 @@ impl LayoutEngine {
                             None,
                             TableCharBorder::default(),
                             true,
+                            None,
                         );
 
                         // 펼친 자식은 가시 내용의 최소 높이를 결정하지만 더 큰 외곽 선언
@@ -3038,14 +3151,17 @@ impl LayoutEngine {
 
         // ── 1. 열 폭 + 행 높이 계산 ──
         let mut col_widths = self.resolve_column_widths(table, col_count);
-        let row_heights = self.resolve_row_heights(
-            table,
-            col_count,
-            row_count,
-            measured_table,
-            styles,
-            depth > 0 || table.common.treat_as_char,
-        );
+        // Reuse atomic_rows snapshot if exist
+        let row_heights = atomic_rows.map(|rows| rows.to_vec()).unwrap_or_else(|| {
+            self.resolve_row_heights(
+                table,
+                col_count,
+                row_count,
+                measured_table,
+                styles,
+                depth > 0 || table.common.treat_as_char,
+            )
+        });
         if std::env::var("RHWP_DIAG_TAC").is_ok() {
             let decl: Vec<f64> = table
                 .cells

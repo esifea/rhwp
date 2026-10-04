@@ -4679,6 +4679,8 @@ impl LayoutEngine {
             has_para_topbottom_float_affecting_column(para, col_area, self.dpi);
         let col_area_w_hu = px_to_hwpunit(col_area.width, self.dpi);
 
+        let generated_tac_rows =
+            para.is_some_and(crate::renderer::composer::has_generated_tac_host_rows);
         // treat_as_char 컨트롤의 px 폭 목록 (절대 char 위치, px 폭, control_index) — 정렬 보장
         let tac_offsets_px: Vec<(usize, f64, usize)> = {
             let mut v: Vec<(usize, f64, usize)> = composed
@@ -4697,6 +4699,13 @@ impl LayoutEngine {
                                         + margin_left
                                         + margin_right,
                                 )
+                            }
+                            // Use value which is calculated from cache_free_tac_host_lines directly
+                            Control::Table(table) if generated_tac_rows => {
+                                let occupancy = super::table_layout::atomic_tac_table_occupancy(
+                                    table, styles, self.dpi,
+                                );
+                                Some(occupancy.width)
                             }
                             Control::Shape(shape) => {
                                 // [#6606] 도형·묶음도 줄 안에서 상자(폭 + 좌우 여백)를 차지한다.
@@ -5120,8 +5129,21 @@ impl LayoutEngine {
         // 162.0px, 실제로 그려진 선 159.7/163.7).
         let mut last_line_box_bottom: Option<f64> = None;
         let mut last_line_border_bottom: Option<f64> = None;
-        let stored_tac_assignment =
-            para.and_then(|p| crate::renderer::composer::stored_tac_line_assignment(p, composed));
+        let stored_tac_assignment = para.and_then(|p| {
+            // Dynamic build line map since rebuilt rows have no cache
+            if generated_tac_rows {
+                Some(
+                    tac_offsets_px
+                        .iter()
+                        .filter_map(|(_, _, ci)| {
+                            super::control_line_seg_index(p, *ci).map(|line| (*ci, line))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                crate::renderer::composer::stored_tac_line_assignment(p, composed)
+            }
+        });
         for line_idx in start_line..end {
             let source_line_tacs;
             let tac_offsets_px = if let Some(assign) = stored_tac_assignment.as_ref() {
@@ -5363,7 +5385,9 @@ impl LayoutEngine {
                         })
                     })
                 });
-            let (line_height, baseline) = if text_before_picture_line {
+            let (line_height, baseline) = if generated_tac_rows {
+                (raw_lh, hwpunit_to_px(comp_line.baseline_distance, self.dpi))
+            } else if text_before_picture_line {
                 let font_lh = max_fs.max(1.0);
                 let font_bl = max_fs * 0.85;
                 (font_lh, ensure_min_baseline(font_bl, max_fs))
@@ -8540,6 +8564,14 @@ impl LayoutEngine {
                                 );
                             }
                             if t.common.treat_as_char && should_render_inline && !already_rendered {
+                                let atomic =
+                                    crate::renderer::composer::has_generated_tac_host_rows(p).then(
+                                        || {
+                                            super::table_layout::atomic_tac_table_occupancy(
+                                                t, styles, self.dpi,
+                                            )
+                                        },
+                                    );
                                 let table_h = hwpunit_to_px(t.common.height as i32, self.dpi);
                                 let om_top = hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
                                 let om_bottom =
@@ -8571,7 +8603,9 @@ impl LayoutEngine {
                                     && (table_h + om_top + om_bottom - 0.2
                                         ..=table_h + om_top + om_bottom + 0.2)
                                         .contains(&raw_lh);
-                                let table_y = if stored_lh_covers_om {
+                                let table_y = if let Some(occupancy) = atomic.as_ref() {
+                                    y + baseline - occupancy.baseline
+                                } else if stored_lh_covers_om {
                                     y + om_top
                                 } else if let Some((owner_h, owner_om_top)) = line_table_owner {
                                     // [#7150] 소유자가 `y + owner_om_top` 에 앉으면 그 상자
@@ -8617,33 +8651,53 @@ impl LayoutEngine {
                                     c
                                 });
                                 let nested_depth = usize::from(cell_ctx.is_some());
-                                self.layout_table(
-                                    tree,
-                                    col_node,
-                                    t,
-                                    section_index,
-                                    styles,
-                                    0,
-                                    col_area,
-                                    table_y,
-                                    bdc,
-                                    None,
-                                    nested_depth,
-                                    Some((para_index, tac_ci)),
-                                    alignment,
-                                    nested_ctx,
-                                    0.0,
-                                    0.0,
-                                    Some(x + tac_table_om.0),
-                                    None,
-                                    None,
-                                    None,
-                                    false,
-                                    false,
-                                    false,
-                                    None,
-                                    Self::standalone_table_char_border_fill(Some(p), t, styles),
-                                );
+                                if let Some(occupancy) = atomic.as_ref() {
+                                    self.layout_atomic_tac_table(
+                                        tree,
+                                        col_node,
+                                        t,
+                                        section_index,
+                                        styles,
+                                        col_area,
+                                        table_y,
+                                        bdc,
+                                        nested_depth,
+                                        (para_index, tac_ci),
+                                        alignment,
+                                        nested_ctx,
+                                        x + tac_table_om.0,
+                                        Self::standalone_table_char_border_fill(Some(p), t, styles),
+                                        occupancy,
+                                    );
+                                } else {
+                                    self.layout_table(
+                                        tree,
+                                        col_node,
+                                        t,
+                                        section_index,
+                                        styles,
+                                        0,
+                                        col_area,
+                                        table_y,
+                                        bdc,
+                                        None,
+                                        nested_depth,
+                                        Some((para_index, tac_ci)),
+                                        alignment,
+                                        nested_ctx,
+                                        0.0,
+                                        0.0,
+                                        Some(x + tac_table_om.0),
+                                        None,
+                                        None,
+                                        None,
+                                        false,
+                                        false,
+                                        false,
+                                        None,
+                                        Self::standalone_table_char_border_fill(Some(p), t, styles),
+                                    );
+                                }
                                 // 스킵 마커 등록 (별도 Table PageItem에서 중복 렌더 방지)
                                 tree.set_inline_shape_position(
                                     section_index,
@@ -9704,35 +9758,76 @@ impl LayoutEngine {
                                 let om_l = hwpunit_to_px(t.outer_margin_left as i32, self.dpi);
                                 let om_top = hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
                                 let table_x = img_x + om_l;
-                                let table_y = vars.y + om_top;
-                                if let Some(bdc) = bin_data_content {
-                                    self.layout_table(
-                                        tree,
-                                        line_node,
-                                        t,
-                                        vars.section_index,
-                                        styles,
-                                        0,
-                                        col_area,
-                                        table_y,
-                                        bdc,
-                                        None,
-                                        0,
-                                        Some((vars.para_index, tac_ci)),
-                                        vars.alignment,
-                                        cell_ctx.clone(),
-                                        0.0,
-                                        0.0,
-                                        Some(table_x),
-                                        None,
-                                        None,
-                                        None,
-                                        false,
-                                        false,
-                                        false,
-                                        None,
-                                        Self::standalone_table_char_border_fill(Some(p), t, styles),
+                                let atomic =
+                                    crate::renderer::composer::has_generated_tac_host_rows(p).then(
+                                        || {
+                                            super::table_layout::atomic_tac_table_occupancy(
+                                                t, styles, self.dpi,
+                                            )
+                                        },
                                     );
+                                let table_y = if let Some(occupancy) = atomic.as_ref() {
+                                    vars.y + hwpunit_to_px(comp_line.baseline_distance, self.dpi)
+                                        - occupancy.baseline
+                                } else {
+                                    vars.y + om_top
+                                };
+                                if let Some(bdc) = bin_data_content {
+                                    if let Some(occupancy) = atomic.as_ref() {
+                                        self.layout_atomic_tac_table(
+                                            tree,
+                                            line_node,
+                                            t,
+                                            vars.section_index,
+                                            styles,
+                                            col_area,
+                                            table_y,
+                                            bdc,
+                                            0,
+                                            (vars.para_index, tac_ci),
+                                            vars.alignment,
+                                            cell_ctx.clone(),
+                                            table_x,
+                                            Self::standalone_table_char_border_fill(
+                                                Some(p),
+                                                t,
+                                                styles,
+                                            ),
+                                            occupancy,
+                                        );
+                                    } else {
+                                        self.layout_table(
+                                            tree,
+                                            line_node,
+                                            t,
+                                            vars.section_index,
+                                            styles,
+                                            0,
+                                            col_area,
+                                            table_y,
+                                            bdc,
+                                            None,
+                                            0,
+                                            Some((vars.para_index, tac_ci)),
+                                            vars.alignment,
+                                            cell_ctx.clone(),
+                                            0.0,
+                                            0.0,
+                                            Some(table_x),
+                                            None,
+                                            None,
+                                            None,
+                                            false,
+                                            false,
+                                            false,
+                                            None,
+                                            Self::standalone_table_char_border_fill(
+                                                Some(p),
+                                                t,
+                                                styles,
+                                            ),
+                                        );
+                                    }
                                 }
                                 tree.set_inline_shape_position(
                                     vars.section_index,

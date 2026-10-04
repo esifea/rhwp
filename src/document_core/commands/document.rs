@@ -476,6 +476,8 @@ impl DocumentCore {
     ) {
         use crate::model::control::Control;
 
+        // Rebuild only admitted inline hosts so both HWP and HWPX containers compose the same flow
+        let rebuild_lineage_hosts = document.provenance.hwpx_lineage;
         for section in &mut document.sections {
             // [#4898] 이 구역의 저장 lineseg 가 배치 권위를 갖는지 먼저 판정한다 —
             // 권위가 있으면 0높이 lineseg(한컴이 접어 둔 숨은 블록)를 재조판하지 않는다.
@@ -502,7 +504,10 @@ impl DocumentCore {
                 // 본문 합성 lineseg 는 흐름 소비를 문단당 ~2.7px 팽창시켜 sijang
                 // 밀도 핀 -5쪽(302 vs 307, #2070v2)만 남기는 잉여 축으로 판정.
                 // 본문 NO_LS 텍스트 문단의 실폭 래핑은 composer recompose 가 담당한다.
-                if Self::needs_line_seg_reflow_in_scope(para, include_empty, section_sized) {
+                let include_host_empty = include_empty
+                    || (rebuild_lineage_hosts
+                        && crate::renderer::composer::supports_cache_free_tac_host(para));
+                if Self::needs_line_seg_reflow_in_scope(para, include_host_empty, section_sized) {
                     let para_style = styles.para_styles.get(para.para_shape_id as usize);
                     // 본문: 열 상자를 그대로 넘긴다 — 렌더가 깎는 상자와 같아야 한다.
                     // 개체 여백은 공통으로 계상하고, 저장 구역의 간격 호환은 전용 진입점에 둔다.
@@ -2029,6 +2034,37 @@ impl DocumentCore {
             let project = |node: &mut crate::model::identity::walk::Node<'_>| {
                 if let crate::model::identity::walk::Node::Paragraph(para) = node {
                     let source_len = para.serializable_line_segs().len();
+
+                    // Restore saved positions only when every current segment has one
+                    if let Some(positions) = para.source_line_seg_vertical_pos.as_ref() {
+                        if positions.len() == para.line_segs.len() {
+                            for (seg, position) in para.line_segs.iter_mut().zip(positions) {
+                                seg.vertical_pos = *position;
+                            }
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                use std::io::Write;
+                                let _ = writeln!(
+                                    std::io::stderr(),
+                                    "Source line-position cache length mismatch: positions={}, line_segs={}; retaining current vertical positions",
+                                    positions.len(), para.line_segs.len()
+                                );
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                use wasm_bindgen::JsValue;
+
+                                web_sys::console::warn_1(
+                                    &JsValue::from_str(&format!(
+                                        "Source line-position cache length mismatch: positions={}, line_segs={}; retaining current vertical positions",
+                                        positions.len(), para.line_segs.len()
+                                    ))
+                                );
+                            }
+                        }
+                    }
+
                     para.line_segs.truncate(source_len);
                     para.layout_only_fill_lines = 0;
                 }

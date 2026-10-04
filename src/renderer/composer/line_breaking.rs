@@ -2575,6 +2575,220 @@ fn inline_control_size_hwp(ctrl: &Control) -> Option<(i32, i32)> {
     }
 }
 
+/// True if paragraph requires reflow
+pub(crate) fn supports_cache_free_tac_host(para: &Paragraph) -> bool {
+    (para.line_segs.is_empty() || para.stored_text_partition_is_dirty())
+    && supports_tac_host_flow(para)
+}
+
+/// True if all segments has right TAG_IMPLEMENTATION_PROPERTY
+pub(crate) fn has_generated_tac_host_rows(para: &Paragraph) -> bool {
+    !para.line_segs.is_empty()
+    && para.line_segs.iter().all(|seg| seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0)
+    && supports_tac_host_flow(para)
+}
+
+fn supports_tac_host_flow(para: &Paragraph) -> bool {
+    // Positive guard: paragraph has at least one table which treat as char and flow with text
+    !para.text.is_empty()
+    && para.controls.iter().any(|control| {
+        matches!(control, Control::Table(table)
+                 if table.common.treat_as_char && table.common.flow_with_text)
+    })
+    // Negative guard: paragraph has any breakable table
+    && !para.controls.iter().any(|control| {
+        if !control_owns_a_layout_box(control) {
+            return false;
+        }
+        !matches!(control, Control::Table(table)
+                  if table.common.treat_as_char
+                     && table.common.flow_with_text
+                     && matches!(table.page_break, crate::model::table::TablePageBreak::None)
+                     && inline_control_size_hwp(control).is_some())
+    })
+}
+
+fn cache_free_tac_host_lines(
+    para: &Paragraph,
+    paragraph_box: &ParagraphBox,
+    styles: &ResolvedStyleSet,
+    dpi: f64,
+    make_line_seg: impl Fn(u32, f64) -> LineSeg,
+) -> Option<Vec<LineSeg>> {
+    if !supports_tac_host_flow(para) {
+        return None;
+    }
+
+    // Round back f64 layout to HWP unit
+    let occupancy_hwp = |value: f64| (value * 7200.0 / dpi).round() as i32;
+    let raw_positions = para.control_utf16_positions();
+    // Each object holds (offset, width with margin, height with margin, baseline)
+    let mut objects = para.controls.iter().zip(raw_positions)
+        .filter_map(|(control, offset)| {
+            let Control::Table(table) = control else {
+                return None;
+            };
+
+            let occupancy = crate::renderer::layout::table_layout::atomic_tac_table_occupancy(
+                table, styles, dpi,
+            );
+            let width = occupancy_hwp(occupancy.width);
+            let height = occupancy_hwp(occupancy.height);
+            let (left, right, top, bottom) = (
+                table.outer_margin_left,
+                table.outer_margin_right,
+                table.outer_margin_top,
+                table.outer_margin_bottom,
+            );
+
+            // Aligned baseline is raw baseline + top margin of table
+            let baseline = occupancy_hwp(occupancy.baseline).saturating_add(i32::from(top));
+            Some((
+                offset,
+                width.saturating_add(i32::from(left)).saturating_add(i32::from(right)),
+                height.saturating_add(i32::from(top)).saturating_add(i32::from(bottom)),
+                baseline,
+            ))
+        }).collect::<Vec<_>>();
+
+    // Scalar stream build: merge text and table
+    objects.sort_by_key(|object| object.0);
+    let mut objects = objects.into_iter().peekable();
+    let mut chars = Vec::new();
+    let mut offsets = Vec::new();
+    let mut inline_controls = Vec::new();
+    let source_chars = para.text.chars().collect::<Vec<_>>();
+
+    for position in 0..=source_chars.len() {
+        let offset = char_index_to_utf16_offset(para, position);
+
+        while objects.peek()
+            .is_some_and(|object| position == source_chars.len() || object.0 <= offset)
+        {
+            let (raw, width_hwp, height_hwp, baseline) = objects.next()?;
+
+            inline_controls.push(FlowInlineControl {
+                char_position: chars.len(),
+                width_hwp, height_hwp,
+                baseline_distance_hwp: Some(baseline),
+            });
+
+            // Temporary isolation with '\t' placeholder
+            chars.push('\t');
+            offsets.push(raw);
+        }
+
+        if let Some(&ch) = source_chars.get(position) {
+            chars.push(ch);
+            offsets.push(offset);
+        }
+    }
+
+    // Tokenizing and replacing BreakToken::Tab to BreakToken::Text
+    let style = styles.para_styles.get(para.para_shape_id as usize);
+    let korean_break_unit = style.map_or(0, |style| style.korean_break_unit);
+    // '\t' -> BreakToken::Tab
+    let mut tokens = tokenize_paragraph_with_regenerated_space_metric(
+        &chars,
+        &offsets,
+        &para.char_shapes,
+        styles,
+        style.map_or(0, |style| style.english_break_unit),
+        korean_break_unit,
+        SpaceMetric::Stored,
+        &[],
+    );
+    let mut letter_spacing =
+        resolved_letter_spacing_px(&chars, &offsets, &para.char_shapes, styles);
+
+    // BreakToken::Tab -> BreakToken::Text
+    for token in &mut tokens {
+        let BreakToken::Tab { idx, max_font_size } = token else {
+            continue;
+        };
+        let Some(control) = inline_controls.iter().find(|control| control.char_position == *idx)
+        else {
+            continue;
+        };
+        let width = hwpunit_to_px(control.width_hwp, dpi);
+
+        // Set letter spacing to 0 since it is originally table
+        letter_spacing[*idx] = 0.0;
+        *token = BreakToken::Text {
+            start_idx: *idx,
+            end_idx: *idx + 1,
+            base_width: width,
+            width,
+            max_font_size: *max_font_size,
+            base_char_widths: vec![width],
+            char_widths: vec![width],
+        };
+    }
+
+    let mut breaks = fill_lines(
+        &tokens,
+        &chars,
+        paragraph_box.width_px(dpi),
+        style.map_or(0.0, |style| style.indent),
+        style.map_or(0.0, |style| style.default_tab_width),
+        korean_break_unit,
+        style.map_or(0, |style| style.condense_min_space),
+        &letter_spacing,
+        0,
+        true,
+        None,
+    );
+
+    // 'fill_lines' may skip leading spaces which regards blank line (start_idx == end_idx).
+    // To preserve layout, map the last index of the first line to the first index of the next line
+    if breaks.len() > 1 && breaks[0].start_idx == breaks[0].end_idx {
+        breaks[0].end_idx = breaks[1].start_idx;
+    }
+    // Keep hard-break rows and the end of paragraph
+    breaks.retain(|line| {
+        line.start_idx < line.end_idx || line.has_line_break || line.start_idx == chars.len()
+    });
+
+    let mut vpos = 0i32;
+    Some(
+        breaks.iter().enumerate()
+            .map(|(index, line)| {
+                let start = if index == 0 {
+                    0
+                } else {
+                    offsets.get(line.start_idx).copied().unwrap_or(para.char_count.saturating_sub(1))
+                };
+                let font_size = if line.max_font_size > 0.0 {
+                    line.max_font_size
+                } else {
+                    paragraph_font_size_px(para, styles).unwrap_or(12.0)
+                };
+                // Set TAG_IMPLEMENTATION_PROPERTY bit flag for has_generated_tac_host_rows
+                let mut seg = make_line_seg(start, font_size);
+                seg.tag = LineSeg::TAG_SINGLE_SEGMENT_LINE | LineSeg::TAG_IMPLEMENTATION_PROPERTY;
+                // Readjust line_height and baseline_distance
+                let mut baseline = seg.baseline_distance;
+                let mut descent = seg.line_height.saturating_sub(baseline);
+
+                for control in inline_controls.iter().filter(|control| {
+                    (line.start_idx..line.end_idx).contains(&control.char_position)
+                }) {
+                    let object_baseline = control.baseline_distance_hwp
+                        .unwrap_or_else(|| baseline_distance_hwp(control.height_hwp));
+                    baseline = baseline.max(object_baseline);
+                    descent = descent.max(control.height_hwp.saturating_sub(object_baseline));
+                }
+                seg.line_height = baseline.saturating_add(descent);
+                seg.text_height = seg.line_height;
+                seg.baseline_distance = baseline;
+                seg.vertical_pos = vpos;
+                // Calculate vpos of the next line
+                vpos = vpos.saturating_add(seg.line_height).saturating_add(seg.line_spacing);
+                seg
+            }).collect(),
+    )
+}
+
 /// [#7160] 프레임 채움 전용 — **글자처럼 취급 표**도 인라인 토큰으로 싣는다.
 ///
 /// 일반 경로는 표를 `control 배치 경로`에 두려고 제외하지만(#3211), 저장 줄이 없는 host 는
@@ -4113,6 +4327,15 @@ fn reflow_line_segs_impl(
             ..Default::default()
         }
     };
+
+    // Intercept and rebuild cache-free TAC host s for HWPX compatibility
+    if !split_stale_cell_reflow {
+        if let Some(lines) = cache_free_tac_host_lines(para, &paragraph_box, styles, dpi, &make_line_seg)
+        {
+            para.replace_line_segs(lines);
+            return false;
+        }
+    }
 
     if para.text.is_empty() {
         // [#4677] 각 인라인 개체의 **UTF-16 오프셋**을 함께 들고 다닌다. lineseg 의

@@ -470,6 +470,9 @@ pub fn is_tac_table_inline(
 /// 따른다. HWP TAC 필러(U+F081C 등 PUA)·공백·오브젝트마커만 있는 문단
 /// (예: 복학원서.hwp pi=16)은 실제 텍스트가 아니므로 여기서 제외된다.
 pub fn is_tac_table_inline_in_para(table: &Table, seg_width: i32, para: &Paragraph) -> bool {
+    if table.common.treat_as_char && crate::renderer::composer::has_generated_tac_host_rows(para) {
+        return true;
+    }
     let chars: Vec<char> = para.text.chars().collect();
     let control_positions = para.control_text_positions();
     let has_middle_anchor = para
