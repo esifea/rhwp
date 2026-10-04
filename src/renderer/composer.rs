@@ -4357,11 +4357,11 @@ pub(crate) use line_breaking::{
 pub mod lineseg_compare;
 
 pub(crate) use line_breaking::{
-    is_line_end_forbidden, is_line_start_forbidden, layout_paragraph_in_frame, layout_picture_band,
-    paragraph_flow_end, recalculate_section_vpos, reflow_line_segs,
-    reflow_line_segs_after_cell_split, reflow_line_segs_after_cell_text_edit,
-    reflow_line_segs_in_stored_section, tokenize_paragraph, BreakToken, StoredRowMissPolicy,
-    has_generated_tac_host_rows, supports_cache_free_tac_host,
+    has_generated_tac_host_rows, is_line_end_forbidden, is_line_start_forbidden,
+    layout_paragraph_in_frame, layout_picture_band, paragraph_flow_end, recalculate_section_vpos,
+    reflow_line_segs, reflow_line_segs_after_cell_split, reflow_line_segs_after_cell_text_edit,
+    reflow_line_segs_in_stored_section, supports_cache_free_tac_host, tokenize_paragraph,
+    BreakToken, StoredRowMissPolicy,
 };
 
 #[cfg(test)]

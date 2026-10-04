@@ -3152,7 +3152,9 @@ pub(crate) fn control_line_seg_index(para: &Paragraph, control_index: usize) -> 
     }
 
     // Rebuilt rows use original locations, also tables at the end of paragraph
-    if para.line_segs.iter()
+    if para
+        .line_segs
+        .iter()
         .all(|seg| seg.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0)
     {
         let raw = *para.control_utf16_positions().get(control_index)?;
@@ -10633,8 +10635,9 @@ impl LayoutEngine {
                     });
 
                     // Skip table numbering for rebuilt rows at re-traverse; they were already counted at initial flow
-                    if has_inline_tables && !has_other_inline_ctrls
-                       && !crate::renderer::composer::has_generated_tac_host_rows(para)
+                    if has_inline_tables
+                        && !has_other_inline_ctrls
+                        && !crate::renderer::composer::has_generated_tac_host_rows(para)
                     {
                         // 인라인 표 문단도 번호 카운터 전진 필요
                         self.apply_paragraph_numbering(

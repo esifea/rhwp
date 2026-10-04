@@ -45,11 +45,11 @@ pub(crate) fn atomic_tac_table_occupancy(
         true,
     );
     let frame_height = row_heights.iter().sum::<f64>()
-                       + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
-                         * row_heights.len().saturating_sub(1) as f64;
+        + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
+            * row_heights.len().saturating_sub(1) as f64;
     let mut width = super::hwpunit_to_px(table.flow_width_hu() as i32, dpi)
-                    + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
-                      * table.col_count.saturating_sub(1) as f64;
+        + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
+            * table.col_count.saturating_sub(1) as f64;
     let mut height = frame_height;
     let mut baseline = frame_height * 0.85;
     let caption_height = crate::renderer::composer::caption_height_px(&table.caption, dpi);

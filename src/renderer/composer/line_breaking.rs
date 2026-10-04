@@ -2578,14 +2578,17 @@ fn inline_control_size_hwp(ctrl: &Control) -> Option<(i32, i32)> {
 /// True if paragraph requires reflow
 pub(crate) fn supports_cache_free_tac_host(para: &Paragraph) -> bool {
     (para.line_segs.is_empty() || para.stored_text_partition_is_dirty())
-    && supports_tac_host_flow(para)
+        && supports_tac_host_flow(para)
 }
 
 /// True if all segments has right TAG_IMPLEMENTATION_PROPERTY
 pub(crate) fn has_generated_tac_host_rows(para: &Paragraph) -> bool {
     !para.line_segs.is_empty()
-    && para.line_segs.iter().all(|seg| seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0)
-    && supports_tac_host_flow(para)
+        && para
+            .line_segs
+            .iter()
+            .all(|seg| seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0)
+        && supports_tac_host_flow(para)
 }
 
 fn supports_tac_host_flow(para: &Paragraph) -> bool {
@@ -2623,7 +2626,10 @@ fn cache_free_tac_host_lines(
     let occupancy_hwp = |value: f64| (value * 7200.0 / dpi).round() as i32;
     let raw_positions = para.control_utf16_positions();
     // Each object holds (offset, width with margin, height with margin, baseline)
-    let mut objects = para.controls.iter().zip(raw_positions)
+    let mut objects = para
+        .controls
+        .iter()
+        .zip(raw_positions)
         .filter_map(|(control, offset)| {
             let Control::Table(table) = control else {
                 return None;
@@ -2645,11 +2651,16 @@ fn cache_free_tac_host_lines(
             let baseline = occupancy_hwp(occupancy.baseline).saturating_add(i32::from(top));
             Some((
                 offset,
-                width.saturating_add(i32::from(left)).saturating_add(i32::from(right)),
-                height.saturating_add(i32::from(top)).saturating_add(i32::from(bottom)),
+                width
+                    .saturating_add(i32::from(left))
+                    .saturating_add(i32::from(right)),
+                height
+                    .saturating_add(i32::from(top))
+                    .saturating_add(i32::from(bottom)),
                 baseline,
             ))
-        }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     // Scalar stream build: merge text and table
     objects.sort_by_key(|object| object.0);
@@ -2662,14 +2673,16 @@ fn cache_free_tac_host_lines(
     for position in 0..=source_chars.len() {
         let offset = char_index_to_utf16_offset(para, position);
 
-        while objects.peek()
+        while objects
+            .peek()
             .is_some_and(|object| position == source_chars.len() || object.0 <= offset)
         {
             let (raw, width_hwp, height_hwp, baseline) = objects.next()?;
 
             inline_controls.push(FlowInlineControl {
                 char_position: chars.len(),
-                width_hwp, height_hwp,
+                width_hwp,
+                height_hwp,
                 baseline_distance_hwp: Some(baseline),
             });
 
@@ -2706,7 +2719,9 @@ fn cache_free_tac_host_lines(
         let BreakToken::Tab { idx, max_font_size } = token else {
             continue;
         };
-        let Some(control) = inline_controls.iter().find(|control| control.char_position == *idx)
+        let Some(control) = inline_controls
+            .iter()
+            .find(|control| control.char_position == *idx)
         else {
             continue;
         };
@@ -2751,12 +2766,17 @@ fn cache_free_tac_host_lines(
 
     let mut vpos = 0i32;
     Some(
-        breaks.iter().enumerate()
+        breaks
+            .iter()
+            .enumerate()
             .map(|(index, line)| {
                 let start = if index == 0 {
                     0
                 } else {
-                    offsets.get(line.start_idx).copied().unwrap_or(para.char_count.saturating_sub(1))
+                    offsets
+                        .get(line.start_idx)
+                        .copied()
+                        .unwrap_or(para.char_count.saturating_sub(1))
                 };
                 let font_size = if line.max_font_size > 0.0 {
                     line.max_font_size
@@ -2773,7 +2793,8 @@ fn cache_free_tac_host_lines(
                 for control in inline_controls.iter().filter(|control| {
                     (line.start_idx..line.end_idx).contains(&control.char_position)
                 }) {
-                    let object_baseline = control.baseline_distance_hwp
+                    let object_baseline = control
+                        .baseline_distance_hwp
                         .unwrap_or_else(|| baseline_distance_hwp(control.height_hwp));
                     baseline = baseline.max(object_baseline);
                     descent = descent.max(control.height_hwp.saturating_sub(object_baseline));
@@ -2783,9 +2804,12 @@ fn cache_free_tac_host_lines(
                 seg.baseline_distance = baseline;
                 seg.vertical_pos = vpos;
                 // Calculate vpos of the next line
-                vpos = vpos.saturating_add(seg.line_height).saturating_add(seg.line_spacing);
+                vpos = vpos
+                    .saturating_add(seg.line_height)
+                    .saturating_add(seg.line_spacing);
                 seg
-            }).collect(),
+            })
+            .collect(),
     )
 }
 
@@ -4330,7 +4354,8 @@ fn reflow_line_segs_impl(
 
     // Intercept and rebuild cache-free TAC host s for HWPX compatibility
     if !split_stale_cell_reflow {
-        if let Some(lines) = cache_free_tac_host_lines(para, &paragraph_box, styles, dpi, &make_line_seg)
+        if let Some(lines) =
+            cache_free_tac_host_lines(para, &paragraph_box, styles, dpi, &make_line_seg)
         {
             para.replace_line_segs(lines);
             return false;
