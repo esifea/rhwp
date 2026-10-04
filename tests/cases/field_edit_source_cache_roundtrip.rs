@@ -15,7 +15,8 @@ fn load_sample(relative: &str) -> DocumentCore {
 }
 
 fn field_named<'a>(core: &'a DocumentCore, name: &str) -> FieldInfo {
-    core.collect_all_fields().into_iter()
+    core.collect_all_fields()
+        .into_iter()
         .find(|field| field.field.field_name() == Some(name))
         .unwrap_or_else(|| panic!("field {name:?} should exist"))
 }
@@ -89,25 +90,35 @@ fn rendered_field_geometry(
             &core
                 .get_page_text_layout_native(page)
                 .expect("field page layout"),
-        ).expect("parse field page layout");
+        )
+        .expect("parse field page layout");
         let runs: Vec<_> = layout["runs"]
             .as_array()
             .expect("text runs")
             .iter()
             .filter(|run| {
-                run["text"].as_str().is_some_and(|text| text.contains(value))
-            }).collect();
+                run["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(value))
+            })
+            .collect();
         if runs.is_empty() {
             continue;
         }
-        let svg = core.render_page_svg_native(page).expect("render field page");
+        let svg = core
+            .render_page_svg_native(page)
+            .expect("render field page");
         let painted = roxmltree::Document::parse(&svg).expect("parse rendered field SVG");
-        let visible: String = painted.descendants().filter(|node| {
+        let visible: String = painted
+            .descendants()
+            .filter(|node| {
                 node.is_text()
                     && node
                         .ancestors()
                         .any(|parent| parent.has_tag_name("text") || parent.has_tag_name("tspan"))
-            }).filter_map(|node| node.text()).collect();
+            })
+            .filter_map(|node| node.text())
+            .collect();
         // SVG omits space/tab clusters; exact run text and charX still check spacing.
         let visible: String = visible.chars().filter(|ch| !ch.is_whitespace()).collect();
         let glyphs: String = value.chars().filter(|ch| !ch.is_whitespace()).collect();
@@ -223,7 +234,8 @@ fn assert_field_layout_roundtrip(
 fn two_empty_native_fields_keep_rendered_geometry_after_save_reload() {
     let mut core = load_sample("samples/field-01.hwp");
     let fields = core.collect_all_fields();
-    let empty_fields: Vec<_> = fields.iter()
+    let empty_fields: Vec<_> = fields
+        .iter()
         .filter(|f| f.field.field_type == FieldType::ClickHere && f.value.is_empty())
         .collect();
     assert!(
@@ -235,8 +247,10 @@ fn two_empty_native_fields_keep_rendered_geometry_after_save_reload() {
     let id2 = empty_fields[1].field.field_id;
     record_original_field_cache(&core, empty_fields[0]);
     record_original_field_cache(&core, empty_fields[1]);
-    core.set_field_value_by_id(id1, "테스트회사").expect("set first field");
-    core.set_field_value_by_id(id2, "테스트작성자").expect("set second field");
+    core.set_field_value_by_id(id1, "테스트회사")
+        .expect("set first field");
+    core.set_field_value_by_id(id2, "테스트작성자")
+        .expect("set second field");
 
     let saved = core.export_hwp_native().expect("export hwp");
     let reparsed = DocumentCore::from_bytes(&saved).expect("reparse exported hwp");
@@ -257,7 +271,8 @@ fn nested_native_table_field_keeps_rendered_geometry_after_save_reload() {
     assert_eq!(field.location.nested_path.len(), 1);
     record_original_field_cache(&core, &field);
 
-    core.set_field_value_by_id(field.field.field_id, "검증 안건명").expect("set nested HWP ClickHere by id");
+    core.set_field_value_by_id(field.field.field_id, "검증 안건명")
+        .expect("set nested HWP ClickHere by id");
     let saved = core.export_hwp_native().expect("export edited HWP");
     let reparsed = DocumentCore::from_bytes(&saved).expect("reparse edited HWP");
     assert_field_render_roundtrip(&core, &reparsed, NAME);
@@ -275,7 +290,8 @@ fn native_textbox_field_keeps_rendered_geometry_after_save_reload() {
     ));
     record_original_field_cache(&core, &field);
 
-    core.set_field_value_by_name(NAME, "검증표지").expect("set textbox ClickHere by name");
+    core.set_field_value_by_name(NAME, "검증표지")
+        .expect("set textbox ClickHere by name");
     let saved = core.export_hwp_native().expect("export edited HWP");
     let reparsed = DocumentCore::from_bytes(&saved).expect("reparse edited HWP");
     assert_field_render_roundtrip(&core, &reparsed, NAME);
@@ -287,11 +303,14 @@ fn repeated_native_field_clear_and_reflow_keep_source_backed_geometry() {
     let name = "회사명";
     let original = field_named(&core, name);
     assert!(
-        !paragraph_at_location(&core, &original.location).serializable_line_segs().is_empty(),
+        !paragraph_at_location(&core, &original.location)
+            .serializable_line_segs()
+            .is_empty(),
         "control requires genuinely source-backed native owner rows"
     );
     for value in ["첫검증회사", "둘검증회사"] {
-        core.set_field_value_by_id(original.field.field_id, value).expect("repeat native field edit");
+        core.set_field_value_by_id(original.field.field_id, value)
+            .expect("repeat native field edit");
         let edited = field_named(&core, name);
         let owner = paragraph_at_location(&core, &edited.location);
         assert!(
@@ -304,7 +323,9 @@ fn repeated_native_field_clear_and_reflow_keep_source_backed_geometry() {
             "clear/regenerate must retain source-backed owner identity"
         );
         let source_rows = owner.serializable_line_segs().to_vec();
-        let saved = core.export_hwp_native().expect("save repeated native field edit");
+        let saved = core
+            .export_hwp_native()
+            .expect("save repeated native field edit");
         let loaded = DocumentCore::from_bytes(&saved).expect("reload repeated native field edit");
         let actual = field_named(&loaded, name);
         assert_eq!(

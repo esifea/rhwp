@@ -2749,8 +2749,11 @@ impl HeightMeasurer {
         // (2-b 축소 규칙) 글자가 잘리지 않도록 축소 바닥으로 쓴다.
         let mut content_row_floor = vec![0.0f64; row_count];
         // Track cells requiring reflow to pinpoint layout updates on non-native documents
-        let fresh_cells: Vec<bool> = table.cells.iter()
-            .map(|cell| !self.is_native_hwp5 && crate::renderer::cell_reflows_content(cell)).collect();
+        let fresh_cells: Vec<bool> = table
+            .cells
+            .iter()
+            .map(|cell| !self.is_native_hwp5 && crate::renderer::cell_reflows_content(cell))
+            .collect();
         let mut fresh_content_floors = Vec::new();
 
         // 1단계: row_span==1인 셀에서 행별 최대 높이 추출
@@ -4388,13 +4391,15 @@ impl HeightMeasurer {
                 let end = start + span;
                 // height after compression: sum of row_height + sum of cell_spacing
                 let occupied = row_heights[start..end].iter().sum::<f64>()
-                               + hwpunit_to_px(table.cell_spacing as i32, self.dpi) * span.saturating_sub(1) as f64;
+                    + hwpunit_to_px(table.cell_spacing as i32, self.dpi)
+                        * span.saturating_sub(1) as f64;
                 // Resize height to prevent text clipping
                 if needed > occupied {
                     row_heights[end - 1] += needed - occupied;
                 }
             }
-            table_height = row_heights.iter().sum::<f64>() + cell_spacing * row_count.saturating_sub(1) as f64;
+            table_height =
+                row_heights.iter().sum::<f64>() + cell_spacing * row_count.saturating_sub(1) as f64;
         }
 
         // 누적 행 높이 계산 (이진 탐색용)

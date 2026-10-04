@@ -2400,9 +2400,12 @@ fn render_control_slot(out: &mut String, control: &Control, ctx: &mut SerializeC
             out.push_str("<hp:ctrl>");
             // Get native memo XML property first, fallback to generated_field_parameters
             let native_memo_params = super::field::memo_field_parameters_xml(f);
-            let generated_params = native_memo_params.clone().or_else(|| generated_field_parameters(f));
+            let generated_params = native_memo_params
+                .clone()
+                .or_else(|| generated_field_parameters(f));
             let has_params = f.raw_parameters_xml.is_some() || generated_params.is_some();
-            let has_memo = f.is_memo() && (!f.memo_paragraphs.is_empty() || native_memo_params.is_some());
+            let has_memo =
+                f.is_memo() && (!f.memo_paragraphs.is_empty() || native_memo_params.is_some());
             if has_params || has_memo {
                 // [#1391] 자식(parameters / memo subList)이 있으면 start/end 태그.
                 out.push_str(&super::field::field_begin_open_tag(f));

@@ -923,7 +923,11 @@ impl Field {
         if self.memo_index != 0 {
             self.memo_index
         } else {
-            self.command.split('/').nth(2).and_then(|value| value.parse().ok()).unwrap_or(0)
+            self.command
+                .split('/')
+                .nth(2)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0)
         }
     }
 

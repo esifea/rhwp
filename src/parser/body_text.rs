@@ -167,7 +167,8 @@ fn validate_memo_framing(data: &[u8]) -> Result<(), BodyTextError> {
         let remaining = data.len() - position;
         if remaining < 4 {
             let memo_tag = remaining >= 2
-                && u16::from_le_bytes([data[position], data[position + 1]]) & 0x3ff == tags::HWPTAG_MEMO_LIST;
+                && u16::from_le_bytes([data[position], data[position + 1]]) & 0x3ff
+                    == tags::HWPTAG_MEMO_LIST;
             if memo_context || memo_tag {
                 return Err(malformed());
             }
@@ -191,7 +192,9 @@ fn validate_memo_framing(data: &[u8]) -> Result<(), BodyTextError> {
             position += 4;
         }
 
-        let Some(end) = position.checked_add(size as usize).filter(|&end| end <= data.len())
+        let Some(end) = position
+            .checked_add(size as usize)
+            .filter(|&end| end <= data.len())
         else {
             if memo_context {
                 return Err(malformed());
@@ -226,11 +229,14 @@ fn parse_memo_lists(records: &[Record]) -> Result<Vec<Field>, BodyTextError> {
         let level = record.level;
         index += 1;
         let header = records.get(index).ok_or_else(malformed)?;
-        if header.tag_id != tags::HWPTAG_LIST_HEADER || header.level != level || header.data.len() < 8
+        if header.tag_id != tags::HWPTAG_LIST_HEADER
+            || header.level != level
+            || header.data.len() < 8
         {
             return Err(malformed());
         }
-        let count = u32::from_le_bytes(header.data[..4].try_into().map_err(|_| malformed())?) as usize;
+        let count =
+            u32::from_le_bytes(header.data[..4].try_into().map_err(|_| malformed())?) as usize;
         let attributes = u32::from_le_bytes(header.data[4..8].try_into().map_err(|_| malformed())?);
         let direction = attributes & 7;
 
@@ -238,7 +244,9 @@ fn parse_memo_lists(records: &[Record]) -> Result<Vec<Field>, BodyTextError> {
             return Err(malformed());
         }
         if direction > 1 {
-            return Err(BodyTextError::MemoStructure("unsupported memo text direction".into()));
+            return Err(BodyTextError::MemoStructure(
+                "unsupported memo text direction".into(),
+            ));
         }
 
         index += 1;
@@ -256,14 +264,17 @@ fn parse_memo_lists(records: &[Record]) -> Result<Vec<Field>, BodyTextError> {
                 index += 1;
             }
 
-            let para = parse_paragraph(&records[start..index]).map_err(|error| BodyTextError::MemoStructure(error.to_string()))?;
+            let para = parse_paragraph(&records[start..index])
+                .map_err(|error| BodyTextError::MemoStructure(error.to_string()))?;
             paragraphs.push(para);
         }
 
         if records.get(index).is_some_and(|record| {
             record.tag_id == tags::HWPTAG_PARA_HEADER && record.level == level
         }) {
-            return Err(BodyTextError::MemoStructure("memo list contains undeclared paragraphs".into()));
+            return Err(BodyTextError::MemoStructure(
+                "memo list contains undeclared paragraphs".into(),
+            ));
         }
 
         link_orphan_field_ends(&mut paragraphs);
@@ -288,7 +299,9 @@ fn attach_memo_lists(sections: &mut [Section], memos: Vec<Field>) -> usize {
         let _ = walk(&mut section.paragraphs, |node| {
             if let Node::Control(Control::Field(field)) = node {
                 if field.is_memo() {
-                    if let Some(memo) = by_index.get_mut(&field.hwp_memo_index()).and_then(VecDeque::pop_front)
+                    if let Some(memo) = by_index
+                        .get_mut(&field.hwp_memo_index())
+                        .and_then(VecDeque::pop_front)
                     {
                         field.field_type = FieldType::Memo;
                         field.memo_index = memo.memo_index;
@@ -306,18 +319,23 @@ fn attach_memo_lists(sections: &mut [Section], memos: Vec<Field>) -> usize {
 }
 
 /// Native memo lists in the final section of which fields belong to earlier sections.
-pub(crate) fn link_memo_lists_across_sections(sections: &mut [Section]) -> Result<(), BodyTextError> {
+pub(crate) fn link_memo_lists_across_sections(
+    sections: &mut [Section],
+) -> Result<(), BodyTextError> {
     let mut memos = Vec::new();
 
     for section in sections.iter() {
         if let Some(raw) = &section.raw_stream {
-            let records = Record::read_all(raw).map_err(|error| BodyTextError::RecordError(error.to_string()))?;
+            let records = Record::read_all(raw)
+                .map_err(|error| BodyTextError::RecordError(error.to_string()))?;
             memos.extend(parse_memo_lists(&records)?);
         }
     }
 
     if attach_memo_lists(sections, memos) != 0 {
-        return Err(BodyTextError::MemoStructure("memo list has no matching field".into()));
+        return Err(BodyTextError::MemoStructure(
+            "memo list has no matching field".into(),
+        ));
     }
 
     Ok(())

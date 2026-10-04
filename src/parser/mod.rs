@@ -877,7 +877,8 @@ fn parse_sections_strict(
                 sections.push(section);
             }
             Err(
-                e @ (body_text::BodyTextError::DrawingTextStructure(_) | body_text::BodyTextError::MemoStructure(_))
+                e @ (body_text::BodyTextError::DrawingTextStructure(_)
+                | body_text::BodyTextError::MemoStructure(_)),
             ) => {
                 return Err(ParseError::BodyTextError(e));
             }
@@ -998,7 +999,8 @@ fn parse_hwp_with_lenient(
                 sections.push(section);
             }
             Err(
-                e @ (body_text::BodyTextError::DrawingTextStructure(_) | body_text::BodyTextError::MemoStructure(_))
+                e @ (body_text::BodyTextError::DrawingTextStructure(_)
+                | body_text::BodyTextError::MemoStructure(_)),
             ) => {
                 return Err(ParseError::BodyTextError(e));
             }

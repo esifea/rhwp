@@ -124,8 +124,7 @@ pub(super) fn prepare(
             .find(|m| m.para_index == para_idx && m.control_index == ci)
             .filter(|m| {
                 let body = crate::renderer::table_row_body_height(&m.cumulative_heights);
-                ((reflows || (unstored_text && !flow.session_edited()))
-                    && body > declared + 0.5)
+                ((reflows || (unstored_text && !flow.session_edited())) && body > declared + 0.5)
                     || (flow.session_edited() && body > declared + 8.0)
             })
         else {
@@ -198,7 +197,8 @@ pub(super) fn prepare(
     } else {
         fmt.total_height
     };
-    let saved_single_tac_bottom_fits = if has_tac && tac_count <= 1 && measured_tac_floor.is_none() {
+    let saved_single_tac_bottom_fits = if has_tac && tac_count <= 1 && measured_tac_floor.is_none()
+    {
         para.controls
             .iter()
             .find_map(|ctrl| match ctrl {
