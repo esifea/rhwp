@@ -8,6 +8,20 @@ pub(crate) struct RowColumnGeometry {
 }
 
 impl RowColumnGeometry {
+    /// Retains one solved complete column grid for every physical row.
+    pub(crate) fn uniform(
+        positions: Vec<f64>,
+        widths: Vec<f64>,
+        rows: usize,
+        spacing: f64,
+    ) -> Self {
+        Self {
+            positions: vec![positions; rows],
+            widths: vec![widths; rows],
+            spacing,
+        }
+    }
+
     pub(super) fn new(positions: Vec<Vec<f64>>, widths: Vec<Vec<f64>>, spacing: f64) -> Self {
         Self {
             positions,

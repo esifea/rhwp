@@ -462,6 +462,11 @@ impl TypesetEngine {
             measured_tables,
             DeferredTableFlushPoint::SectionEnd,
         );
+        if !st.pending_generated_atomic_tables.is_empty()
+            || !st.materialized_generated_atomic_tables.is_empty()
+        {
+            st.drain_generated_atomic_tables_with_storage(storage)?;
+        }
         Issue2424TypesetProfile::add(
             &mut issue2424_prof.deferred_flush,
             issue2424_final_flush_started,

@@ -89,10 +89,15 @@ pub(in crate::renderer::typeset) fn place(
     let mt = measured_tables
         .iter()
         .find(|mt| mt.para_index == para_idx && mt.control_index == ctrl_idx);
+    if super::generated_atomic::defer(engine, st, para_idx, ctrl_idx, para, table, &ft, fmt, mt) {
+        return false;
+    }
     let is_first_placed = first_placed_table == Some(ctrl_idx);
     let is_last_placed = last_placed_table == Some(ctrl_idx);
+    // Retain the owner line for tables participating in format-specific TAC flow.
     // Fresh block content uses the split path when its grown frame exceeds the page.
     let reflowed_block_table = !st.profile.native_hwp5_layout()
+        && !engine.uses_tac_table_flow(table)
         && crate::renderer::table_reflows_cell_content(table)
         && crate::renderer::table_row_body_height(&ft.cumulative_heights)
             > hwpunit_to_px(table.common.height as i32, engine.dpi) + 0.5

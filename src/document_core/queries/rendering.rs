@@ -4826,6 +4826,7 @@ impl DocumentCore {
     pub(crate) fn rebuild_derived_state(&mut self) {
         self.pending_cell_format_vpos = false;
         self.rebuild_resolved_styles();
+        self.invalidate_generated_cell_partitions();
         self.rebuild_embedded_exact_font_sources();
         self.recompose_all_with_horizontal_shaping();
         self.mark_all_sections_dirty();

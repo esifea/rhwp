@@ -6318,13 +6318,10 @@ impl LayoutEngine {
                 _ => target_area.x + (target_area.width - text_width) / 2.0,
             };
 
-            // 자동 꼬리말 쪽번호는 아래쪽 여백 선을 기준으로 배치한다.
-            // 머리말 위치의 기존 실제 글자 배치는 이번 보정 범위 밖이다.
             let border_drawn = !page_content
                 .page_hide
                 .as_ref()
-                .map(|ph| ph.hide_border)
-                .unwrap_or(false);
+                .is_some_and(|ph| ph.hide_border);
             let is_footer = !matches!(pnp.position, 1..=3 | 7 | 9);
             let footer_center = if is_footer {
                 self.footer_page_number_y(
@@ -14499,6 +14496,58 @@ impl LayoutEngine {
             wrap_anchors,
             ..
         } = ctx;
+        if let Some(placement) = ctx
+            .paragraph_float_placements
+            .get(&(para_index, control_index))
+        {
+            if let super::float_placement::ParagraphFloatFlow::GeneratedAtomicPage(owner) =
+                placement.flow
+            {
+                if let Some(para) = paragraphs.get(para_index) {
+                    if let Some(Control::Table(table)) = para.controls.get(control_index) {
+                        debug_assert_eq!(
+                            (owner.para_index, owner.control_index),
+                            (para_index, control_index)
+                        );
+                        debug_assert_eq!(owner.consumed_end_row, usize::from(table.row_count));
+                        let measured = measured_tables.iter().find(|measured| {
+                            measured.para_index == para_index
+                                && measured.control_index == control_index
+                        });
+                        // Paint the full unit at its resolved destination origin. Its page
+                        // exclusion has already advanced body flow; geometry cannot do so again.
+                        self.layout_table(
+                            tree,
+                            col_node,
+                            table,
+                            page_content.section_index,
+                            styles,
+                            *outline_numbering_id,
+                            col_area,
+                            col_area.y + placement.table_top,
+                            bin_data_content,
+                            measured,
+                            0,
+                            Some((para_index, control_index)),
+                            Alignment::Left,
+                            None,
+                            0.0,
+                            0.0,
+                            None,
+                            None,
+                            Some(col_area.y + placement.anchor_y),
+                            None,
+                            false,
+                            false,
+                            0.0,
+                            Some((placement.table_left, col_area.y + placement.table_top)),
+                            Self::standalone_table_char_border_fill(Some(para), table, styles),
+                        );
+                        return (y_offset, false);
+                    }
+                }
+            }
+        }
         // 표 앵커 문단의 y 위치 등록
         // TAC 표: 이전 TAC가 y_offset을 진행시킨 경우 갱신 (같은 문단 TAC+블록 구조)
         // 비-TAC 표: 문단 시작 y를 유지 (각 표가 독립적으로 vert offset 기준 배치)

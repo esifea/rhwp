@@ -518,6 +518,7 @@ fn metric_entry_provenance(
 fn transform_steps(
     run: &TextRunNode,
     ch: char,
+    run_offset: usize,
     decision: &crate::renderer::layout::CharWidthDecision<'_>,
 ) -> Vec<DecisionStep> {
     if matches!(
@@ -574,7 +575,11 @@ fn transform_steps(
     for (kind, value, applies) in [
         ("letterSpacing", run.style.letter_spacing, true),
         ("extraCharacterSpacing", run.style.extra_char_spacing, true),
-        ("extraWordSpacing", run.style.extra_word_spacing, ch == ' '),
+        (
+            "extraWordSpacing",
+            run.style.extra_word_spacing,
+            ch == ' ' && run_offset >= run.style.unjustified_leading_spaces,
+        ),
         (
             "extraDashAdvance",
             run.style.extra_dash_advance,
@@ -1068,7 +1073,7 @@ impl DocumentCore {
                     width_source: width.width_source.into(),
                     measurement_character: width.measurement_character.map(|ch| ch.to_string()),
                     base_advance_hwpunit: Some(px_to_hwpunit(width.base_width_px, self.dpi)),
-                    transforms: transform_steps(run, ch, width),
+                    transforms: transform_steps(run, ch, run_offset, width),
                     final_advance_hwpunit: Some(px_to_hwpunit(width.final_width_px, self.dpi)),
                 };
                 let source_offset = source_character.map(|(offset, _)| offset);

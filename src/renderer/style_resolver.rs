@@ -146,17 +146,31 @@ pub(crate) fn resolve_styles_with_environment(
             styles.page_number_font_is_hft,
         ) = page_number::resolve(&document.doc_info, profile.hangul2024_layout());
     }
+    styles.generated_line_environment = environment.map(|environment| {
+        serde_json::to_string(environment)
+            .expect("font environment serialization is infallible")
+            .into()
+    });
     if environment.is_some() {
         let lookup = missing_fonts::lookup_context(document);
-        for (style, shape) in styles
-            .char_styles
-            .iter_mut()
-            .zip(&document.doc_info.char_shapes)
-        {
+        for (style, shape) in styles.char_styles.iter_mut().zip(&lookup.char_shapes) {
             let mut latin_program_changed = false;
             for lang in 0..LANG_COUNT {
+                let missing_source_slot = document
+                    .doc_info
+                    .font_faces
+                    .get(lang)
+                    .and_then(|fonts| fonts.get(shape.font_ids[lang] as usize))
+                    .is_none();
+                let selection_info = if missing_source_slot
+                    && environment.and_then(|env| env.fallback_face()).is_some()
+                {
+                    &document.doc_info
+                } else {
+                    &lookup
+                };
                 let decision = lookup_font_name_in_environment(
-                    &lookup,
+                    selection_info,
                     lang,
                     shape.font_ids[lang],
                     environment,
@@ -190,7 +204,10 @@ pub(crate) fn resolve_styles_with_environment(
                         && original.normalized_face.as_deref() == Some(target)
                         && source_font.is_some_and(|face| face.native_program.is_none())
                         && (metric_widths_verified_face(target)
-                            || matches!(target, "휴먼명조" | "HumanMyeongJo"));
+                            || matches!(
+                                target,
+                                "휴먼명조" | "HumanMyeongJo" | "HCR Dotum" | "함초롬돋움"
+                            ));
                     // 자동 표시용 선택은 저장된 원본 HFT 메트릭의 변경이 아니다.
                     let keep_source_metrics = !primary_true_type_program
                         && environment.is_some_and(|env| env.preserves_source_metrics())
@@ -221,10 +238,10 @@ pub(crate) fn resolve_styles_with_environment(
                     let explicit_true_type = !keep_source_metrics
                         && environment.is_some_and(|env| env.selects_true_type(target));
                     let explicit_replacement = environment.is_some_and(|env| {
-                        decision
-                            .requested_face
-                            .as_deref()
-                            .is_some_and(|face| env.replacement(face).is_some())
+                        decision.requested_face.as_deref().is_some_and(|face| {
+                            env.replacement_for(face, lang, shape.font_ids[lang])
+                                .is_some()
+                        }) || (missing_source_slot && env.fallback_face().is_some())
                     });
                     // 원본 메트릭을 유지하는 표시용 대체는 기존 paint 폭 맞춤도 유지한다.
                     // 원 프로그램의 자연 윤곽은 그 메트릭까지 선택한 세션만 보존한다.
@@ -242,7 +259,10 @@ pub(crate) fn resolve_styles_with_environment(
                         latin_program_changed |= lang == 1;
                         style.font_families_metric_trusted[lang] = explicit_true_type
                             && (metric_widths_verified_face(target)
-                                || matches!(target, "휴먼명조" | "HumanMyeongJo"));
+                                || matches!(
+                                    target,
+                                    "휴먼명조" | "HumanMyeongJo" | "HCR Dotum" | "함초롬돋움"
+                                ));
                     }
                     if explicit_true_type {
                         style.font_families_hft_hangul[lang] = false;
@@ -357,6 +377,7 @@ fn try_resolve_styles_with_variant<S: storage::Storage>(
         page_number::resolve(doc_info, false);
 
     let mut styles = ResolvedStyleSet {
+        generated_line_environment: None,
         source_program_projection_slots: Default::default(),
         native_pua_fonts: Default::default(),
         char_overlap_size_bounds: None,
@@ -1213,11 +1234,11 @@ pub(crate) fn lookup_font_name_in_environment(
     let mut decision = lookup_font_name_decision(doc_info, lang_index, font_id);
     if decision.embedded != Some(true) {
         if let Some((environment, target)) = environment.and_then(|env| {
-            decision
-                .requested_face
-                .as_deref()
-                .and_then(|face| env.replacement_for(face, lang_index, font_id))
-                .map(|target| (env, target))
+            let target = match decision.requested_face.as_deref() {
+                Some(face) => env.replacement_for(face, lang_index, font_id),
+                None => env.fallback_face(),
+            };
+            target.map(|target| (env, target))
         }) {
             // 같은 주 프로그램의 신원 인증은 준비된 glyph fallback 체인을 바꾸지 않는다.
             if decision.normalized_face.as_deref() != Some(target) {

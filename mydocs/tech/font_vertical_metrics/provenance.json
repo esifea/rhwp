@@ -1,0 +1,442 @@
+{
+  "records": [
+    {
+      "acceptedNames": [
+        "HCR Dotum",
+        "함초롬돋움"
+      ],
+      "convention": "hhea/source-em",
+      "entryId": "font-metric.afe9fdb40f52526f9c46",
+      "entryIndex": 2,
+      "historicalFullFontSha256": null,
+      "name": "HCR Dotum",
+      "provenance": "font-metric.afe9fdb40f52526f9c46.hhea.v1",
+      "qualification": "full-font-hhea",
+      "sources": [
+        {
+          "faceIndex": 0,
+          "fontProgramSha256": "0dfe708556a36379ed1aaa37d4a9ec62b860939e84dd3ccdbeb0c0ad5314cd14",
+          "glyphCount": 64791,
+          "matchingAsciiAdvances": {
+            " ": 300,
+            "!": 333,
+            "\"": 339,
+            "#": 686,
+            "$": 626,
+            "%": 853,
+            "&": 761,
+            "'": 260,
+            "(": 313,
+            ")": 313,
+            "*": 498,
+            "+": 548,
+            ",": 258,
+            "-": 466,
+            ".": 270,
+            "/": 374,
+            "0": 550,
+            "1": 550,
+            "2": 550,
+            "3": 550,
+            "4": 550,
+            "5": 550,
+            "6": 550,
+            "7": 550,
+            "8": 550,
+            "9": 550,
+            ":": 312,
+            ";": 312,
+            "<": 600,
+            "=": 534,
+            ">": 600,
+            "?": 570,
+            "@": 865,
+            "A": 654,
+            "B": 664,
+            "C": 633,
+            "D": 701,
+            "E": 625,
+            "F": 609,
+            "G": 645,
+            "H": 694,
+            "I": 317,
+            "J": 515,
+            "K": 664,
+            "L": 584,
+            "M": 826,
+            "N": 728,
+            "O": 676,
+            "P": 660,
+            "Q": 681,
+            "R": 683,
+            "S": 617,
+            "T": 573,
+            "U": 702,
+            "V": 594,
+            "W": 897,
+            "X": 607,
+            "Y": 581,
+            "Z": 584,
+            "[": 338,
+            "\\": 373,
+            "]": 329,
+            "^": 562,
+            "_": 532,
+            "`": 373,
+            "a": 563,
+            "b": 581,
+            "c": 513,
+            "d": 578,
+            "e": 567,
+            "f": 336,
+            "g": 563,
+            "h": 594,
+            "i": 271,
+            "j": 268,
+            "k": 559,
+            "l": 258,
+            "m": 919,
+            "n": 595,
+            "o": 582,
+            "p": 552,
+            "q": 552,
+            "r": 427,
+            "s": 513,
+            "t": 349,
+            "u": 595,
+            "v": 469,
+            "w": 760,
+            "x": 483,
+            "y": 466,
+            "z": 479,
+            "{": 372,
+            "|": 342,
+            "}": 372,
+            "~": 546
+          },
+          "nameRecords": [
+            {
+              "id": 0,
+              "value": "Copyright (c) 2010-2014 Hancom INC(HNC). All rights reserved."
+            },
+            {
+              "id": 1,
+              "value": "HCR Dotum"
+            },
+            {
+              "id": 2,
+              "value": "Regular"
+            },
+            {
+              "id": 3,
+              "value": "YoonDesign: HCR Dotum: 2014"
+            },
+            {
+              "id": 4,
+              "value": "HCR Dotum"
+            },
+            {
+              "id": 5,
+              "value": "Version 1.980; Build 20140819"
+            },
+            {
+              "id": 6,
+              "value": "HCRDotum"
+            },
+            {
+              "id": 7,
+              "value": "HCR Dotum is a trademark of YoonDesign."
+            },
+            {
+              "id": 8,
+              "value": "YoonDesign"
+            },
+            {
+              "id": 11,
+              "value": "http://yoonfont.co.kr/"
+            },
+            {
+              "id": 12,
+              "value": "http://yoonfont.co.kr/"
+            },
+            {
+              "id": 13,
+              "value": "YoonDesign Inc."
+            },
+            {
+              "id": 14,
+              "value": "http://yoonfont.co.kr/"
+            },
+            {
+              "id": 18,
+              "value": "HCR Dotum"
+            },
+            {
+              "id": 0,
+              "value": "Copyright (c) 2010-2014 Hancom INC(HNC). All rights reserved."
+            },
+            {
+              "id": 1,
+              "value": "HCR Dotum"
+            },
+            {
+              "id": 2,
+              "value": "Regular"
+            },
+            {
+              "id": 3,
+              "value": "YoonDesign: HCR Dotum: 2014"
+            },
+            {
+              "id": 4,
+              "value": "HCR Dotum"
+            },
+            {
+              "id": 5,
+              "value": "Version 1.980; Build 20140819"
+            },
+            {
+              "id": 6,
+              "value": "HCRDotum"
+            },
+            {
+              "id": 7,
+              "value": "HCR Dotum is a trademark of YoonDesign."
+            },
+            {
+              "id": 8,
+              "value": "YoonDesign"
+            },
+            {
+              "id": 11,
+              "value": "http://yoonfont.co.kr/"
+            },
+            {
+              "id": 12,
+              "value": "http://yoonfont.co.kr/"
+            },
+            {
+              "id": 13,
+              "value": "YoonDesign Inc."
+            },
+            {
+              "id": 14,
+              "value": "http://yoonfont.co.kr/"
+            },
+            {
+              "id": 18,
+              "value": "HCR Dotum"
+            },
+            {
+              "id": 0,
+              "value": "Copyright (c) 2010-2014 Hancom INC(HNC). All rights reserved."
+            },
+            {
+              "id": 1,
+              "value": "함초롬돋움"
+            },
+            {
+              "id": 2,
+              "value": "Regular"
+            },
+            {
+              "id": 3,
+              "value": "YoonDesign: HCR Dotum: 2014"
+            },
+            {
+              "id": 4,
+              "value": "함초롬돋움"
+            },
+            {
+              "id": 9,
+              "value": "Hancom Inc."
+            }
+          ],
+          "namingLimit": "current full-font source verified; historical generator source unknown",
+          "path": "HANDotum.ttf",
+          "rawEmHhea": [
+            1000,
+            1070,
+            -230,
+            0
+          ],
+          "sha256": "0dfe708556a36379ed1aaa37d4a9ec62b860939e84dd3ccdbeb0c0ad5314cd14"
+        }
+      ],
+      "widthProjectionSha256": "666cec5c3278f9920d99635daaa7359ef95a25ff7bfdce4a7bbe670d4c85ceb9"
+    },
+    {
+      "acceptedNames": [
+        "HYSinMyeongJo-Medium",
+        "HY신명조"
+      ],
+      "convention": "hhea/source-em",
+      "entryId": "font-metric.2b7a4214d610ebc0d2e9",
+      "entryIndex": 276,
+      "historicalFullFontSha256": null,
+      "name": "HYSinMyeongJo-Medium",
+      "provenance": "font-metric.2b7a4214d610ebc0d2e9.hhea.v1",
+      "qualification": "cross-document-pdf-global-hhea",
+      "sources": [
+        {
+          "baseFont": "/INPILL+H2mjsM",
+          "creator": "Hwp 2024 13.0.0.3622",
+          "firstPage": 2,
+          "fontProgramSha256": "4797aeaca170b35ac5adca6e2955b812ad45c7f6c53d7cbc3c8633757f65db18",
+          "fontResource": "/F5",
+          "fullFontSha256": null,
+          "glyphCount": 79,
+          "matchingAsciiAdvances": {
+            " ": 341,
+            "(": 512,
+            ")": 512,
+            ",": 298,
+            "-": 853,
+            ".": 298,
+            "0": 640,
+            "1": 640,
+            "2": 640,
+            "3": 640,
+            "4": 640,
+            "5": 640,
+            "6": 640,
+            "9": 640
+          },
+          "nameRecords": null,
+          "namingLimit": "original historical full-source identity unknown; PDF subset name is not identity",
+          "path": "samples/task1749/saved_bounds_cumulative_page_break-2024.pdf",
+          "producer": "Hancom PDF 1.3.0.550",
+          "programSha256": "4797aeaca170b35ac5adca6e2955b812ad45c7f6c53d7cbc3c8633757f65db18",
+          "rawEmHhea": [
+            1024,
+            879,
+            -145,
+            152
+          ],
+          "sha256": "68c09b6df2aa5f6c89272193c69013a7a7417e0f587e5bb473274e50ef0e7e70"
+        },
+        {
+          "baseFont": "/INPILL+H2mjsM",
+          "creator": "Hwp 2020 0.0.0.0",
+          "firstPage": 1,
+          "fontProgramSha256": "58e39dec8e57b8a921d2d8263cfa30b84835c46b410555391e047f0d279da98b",
+          "fontResource": "/F3",
+          "fullFontSha256": null,
+          "glyphCount": 17,
+          "matchingAsciiAdvances": {
+            " ": 341,
+            "1": 640,
+            "4": 640,
+            "[": 512,
+            "]": 512
+          },
+          "nameRecords": null,
+          "namingLimit": "original historical full-source identity unknown; PDF subset name is not identity",
+          "path": "pdf/18179365_high_voltage_collision-2020.pdf",
+          "producer": "Hancom PDF 1.3.0.550",
+          "programSha256": "58e39dec8e57b8a921d2d8263cfa30b84835c46b410555391e047f0d279da98b",
+          "rawEmHhea": [
+            1024,
+            879,
+            -145,
+            152
+          ],
+          "sha256": "179353f2e83e35e913571796d3ef4033c9662d229c70b0f0b0bc8257c67b88b7"
+        },
+        {
+          "baseFont": "/INPILL+H2mjsM",
+          "creator": "Hancom PDF 1.3.0.550",
+          "firstPage": 4,
+          "fontProgramSha256": "cdd3fa069403ff187bf35adda0cfc3ee2de79b555650f1d2b3e598d7b2c267a9",
+          "fontResource": "/F8",
+          "fullFontSha256": null,
+          "glyphCount": 313,
+          "matchingAsciiAdvances": {
+            " ": 341,
+            "(": 512,
+            ")": 512,
+            "-": 853,
+            ".": 298,
+            ":": 341,
+            "A": 810,
+            "B": 725,
+            "C": 725,
+            "D": 768,
+            "E": 725,
+            "F": 682,
+            "G": 768,
+            "H": 810,
+            "W": 1024,
+            "a": 554,
+            "b": 597,
+            "c": 554,
+            "d": 597,
+            "e": 597,
+            "f": 384,
+            "g": 597,
+            "h": 597,
+            "i": 298,
+            "j": 341,
+            "k": 597,
+            "n": 597,
+            "o": 597,
+            "r": 469,
+            "s": 554,
+            "t": 384,
+            "u": 597,
+            "z": 512
+          },
+          "nameRecords": null,
+          "namingLimit": "original historical full-source identity unknown; PDF subset name is not identity",
+          "path": "pdf/german-legislative-system-review-2020.pdf",
+          "producer": "Hancom PDF 1.3.0.550",
+          "programSha256": "cdd3fa069403ff187bf35adda0cfc3ee2de79b555650f1d2b3e598d7b2c267a9",
+          "rawEmHhea": [
+            1024,
+            879,
+            -145,
+            152
+          ],
+          "sha256": "8a8542c9cc765c7673e8ca78ab178b34ce3d6f934ebb188db9d3872019b6e4f4"
+        },
+        {
+          "baseFont": "/INPILL+H2mjsM",
+          "creator": "Hwp 2024 13.0.0.3622",
+          "firstPage": 24,
+          "fontProgramSha256": "e82f11df91ab72a9466d8df84225fed2873bde1b3c854431345e742b1c5f313e",
+          "fontResource": "/F19",
+          "fullFontSha256": null,
+          "glyphCount": 320,
+          "matchingAsciiAdvances": {
+            " ": 341,
+            "(": 512,
+            ")": 512,
+            ",": 298,
+            ".": 298,
+            "0": 640,
+            "1": 640,
+            "2": 640,
+            "3": 640,
+            "4": 640,
+            "6": 640,
+            "8": 640
+          },
+          "nameRecords": null,
+          "namingLimit": "original historical full-source identity unknown; PDF subset name is not identity",
+          "path": "samples/issue1891/86712_regulatory_analysis-2024.pdf",
+          "producer": "Hancom PDF 1.3.0.550",
+          "programSha256": "e82f11df91ab72a9466d8df84225fed2873bde1b3c854431345e742b1c5f313e",
+          "rawEmHhea": [
+            1024,
+            879,
+            -145,
+            152
+          ],
+          "sha256": "b612638c849d967cf3005d0a7c82df18f47ac66f3b2777632ffe0912135b4a81"
+        }
+      ],
+      "widthProjectionSha256": "543ad65b8847cbaf754dbff30000d8bf40065ba5076103299c333ac122007181"
+    }
+  ],
+  "schemaVersion": 1
+}

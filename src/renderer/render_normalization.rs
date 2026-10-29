@@ -98,6 +98,7 @@ pub struct RenderNormalizationOverlay {
     expanded_inline_host_tables_by_pointer: HashSet<usize>,
     nested_tables_with_reflowed_hosts: HashSet<usize>,
     stored_nested_text_frames_by_pointer: HashMap<usize, Arc<StoredNestedTextFrames>>,
+    stored_opening_frames_by_pointer: HashMap<usize, u32>,
 }
 
 impl RenderNormalizationOverlay {
@@ -135,6 +136,12 @@ impl RenderNormalizationOverlay {
                         let Control::Table(table) = control else {
                             continue;
                         };
+                        overlay.record_stored_opening_frame_with_storage(
+                            paragraph,
+                            section.paragraphs.get(parent_paragraph_index + 1),
+                            table,
+                            storage,
+                        )?;
                         let path = RenderPath::top_level(section_index, parent_paragraph_index);
                         // [#6590] 최상위 글자처럼(TAC) 표의 선언 폭이 본문 폭을 근소 초과하면
                         // 한/글은 본문 폭으로 비례 축소해 그린다. 근거는 host 문단의 저장
@@ -234,6 +241,61 @@ impl RenderNormalizationOverlay {
             .cloned()
     }
 
+    /// Records a physical opening frame only when the following source owner closes it.
+    fn record_stored_opening_frame_with_storage<S: crate::storage::Storage>(
+        &mut self,
+        host: &crate::model::paragraph::Paragraph,
+        successor: Option<&crate::model::paragraph::Paragraph>,
+        table: &Table,
+        storage: &S,
+    ) -> Result<(), S::Error> {
+        let Some(successor) = successor else {
+            return Ok(());
+        };
+        if host.line_segs.is_empty()
+            || successor.line_segs.is_empty()
+            || host
+                .line_segs
+                .iter()
+                .chain(&successor.line_segs)
+                .any(|line| {
+                    line.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
+                })
+        {
+            return Ok(());
+        }
+        // A positive rewind closes the remaining raw rows. Cumulative coordinates
+        // instead close the host origin, object offset, and declared opening box.
+        let owns_frame = super::float_placement::stored_rowbreak_closing_frame_height(
+            host, successor, table, 96.0,
+        )
+        .is_some()
+            || super::float_placement::stored_cumulative_rowbreak_opening_frame_height(
+                host, successor, table, 96.0,
+            )
+            .is_some();
+        if owns_frame {
+            storage.insert_map(
+                &mut self.stored_opening_frames_by_pointer,
+                table as *const Table as usize,
+                table.common.height,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Returns the saved opening height authenticated by its following source owner.
+    pub(crate) fn stored_opening_frame_height_hu(&self, table: &Table) -> Option<u32> {
+        if self.table_frame_reflowed_without_cell_scope(table)
+            || self.nested_table_has_reflowed_host(table)
+        {
+            return None;
+        }
+        self.stored_opening_frames_by_pointer
+            .get(&(table as *const Table as usize))
+            .copied()
+    }
+
     fn collect_nested_tables(
         &mut self,
         owner_table: &Table,
@@ -283,6 +345,12 @@ impl RenderNormalizationOverlay {
                             .insert(nested.as_ref() as *const Table as usize);
                     }
 
+                    self.record_stored_opening_frame_with_storage(
+                        paragraph,
+                        cell.paragraphs.get(paragraph_index + 1),
+                        nested,
+                        storage,
+                    )?;
                     let mut nested_path = crate::storage::try_clone(&path, storage)?;
                     storage.push(
                         &mut nested_path.entries,

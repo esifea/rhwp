@@ -3249,6 +3249,7 @@ pub(crate) fn stored_adjacent_line_table_frame(
 /// 마지막 행이 이어지는 저장 표에서 전체 행 프레임과 첫 개체 프레임의
 /// 차이가 뒤 문단의 저장 원점을 정확히 닫으면 종료 조각의 물리 높이이다.
 /// 내용 유닛에 없는 빈 밴드도 보존하며, 편집·로컬 재시작은 증거로 쓰지 않는다.
+/// 원본 좌표 스냅샷은 현재 저장 줄 벡터와 길이가 같을 때만 재사용한다.
 pub(crate) fn stored_rowbreak_closing_frame_height(
     host: &Paragraph,
     successor: &Paragraph,
@@ -3258,7 +3259,14 @@ pub(crate) fn stored_rowbreak_closing_frame_height(
     use crate::model::paragraph::LineSeg;
     let before = host.line_segs.first()?;
     let after = successor.line_segs.first()?;
-    if host.stored_text_partition_is_dirty()
+    let before_vpos = ladder_vpos(host, 0, before.vertical_pos);
+    let after_vpos = ladder_vpos(successor, 0, after.vertical_pos);
+    if [host, successor].iter().any(|paragraph| {
+        paragraph
+            .source_line_seg_vertical_pos
+            .as_ref()
+            .is_some_and(|source| source.len() != paragraph.line_segs.len())
+    }) || host.stored_text_partition_is_dirty()
         || successor.stored_text_partition_is_dirty()
         || host
             .line_segs
@@ -3266,8 +3274,8 @@ pub(crate) fn stored_rowbreak_closing_frame_height(
             .chain(&successor.line_segs)
             .any(|line| line.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0)
         || !successor.controls.is_empty()
-        || after.vertical_pos <= 0
-        || before.vertical_pos <= after.vertical_pos
+        || after_vpos <= 0
+        || before_vpos <= after_vpos
         || table.common.treat_as_char
         || !is_para_topbottom_float(&table.common)
         || table.page_break != TablePageBreak::RowBreak
@@ -3287,7 +3295,7 @@ pub(crate) fn stored_rowbreak_closing_frame_height(
     // 뒤 문단 원점은 표 상자와 바깥 여백을 함께 닫는다. 반환 높이는
     // 표 상자만 소유하고 여백은 기존 조각 배치가 별도로 예약한다.
     let margins = i64::from(table.outer_margin_top) + i64::from(table.outer_margin_bottom);
-    (remaining > 0 && remaining + margins == i64::from(after.vertical_pos))
+    (remaining > 0 && remaining + margins == i64::from(after_vpos))
         .then(|| remaining as f64 * dpi / 7200.0)
 }
 
@@ -3675,6 +3683,8 @@ pub enum ParagraphFloatFlow {
     },
     /// 용지 기준 프레임은 쪽 시작 본문을 예약하되 뒤 호스트 글줄을 되감지 않는다.
     AbsolutePageFrame,
+    /// Owns one physical page independently of its overflowing geometry.
+    GeneratedAtomicPage(GeneratedAtomicTablePage),
 }
 
 /// 뒤 호스트의 용지 기준 자리차지 도형과 본문 재시작이 같은 상자를 닫는 경우.
@@ -3817,6 +3827,17 @@ pub(crate) fn stored_future_paper_shape_frame(
         }
     }
     result
+}
+
+/// Identifies the complete generated unit consumed by a single physical page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedAtomicTablePage {
+    pub para_index: usize,
+    pub control_index: usize,
+    /// Zero-based physical page within the section.
+    pub destination_page: usize,
+    /// Exclusive row endpoint of the indivisible whole-table unit.
+    pub consumed_end_row: usize,
 }
 
 /// 확정 개체 프레임의 후속 줄은 이미 앞 간격을 포함한 저장 원점을 소유한다.
@@ -5840,6 +5861,7 @@ impl ParagraphFloatPlacement {
             ParagraphFloatFlow::StoredPicture { next_flow_y }
             | ParagraphFloatFlow::StoredPictureGroup { next_flow_y } => next_flow_y,
             ParagraphFloatFlow::AbsolutePageFrame => text_flow_end.max(self.occupied_bottom),
+            ParagraphFloatFlow::GeneratedAtomicPage(_) => text_flow_end,
         }
     }
 

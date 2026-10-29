@@ -86,6 +86,7 @@ mod tests {
             resolved_dpi: None,
             page_number_char_style_id: None,
             page_number_font_is_hft: false,
+            generated_line_environment: None,
             hwp3_variant: false,
             hft_ascii_halfwidth: false,
             char_styles: vec![ResolvedCharStyle::default()],

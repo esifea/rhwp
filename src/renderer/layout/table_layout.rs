@@ -80,34 +80,159 @@ use crate::renderer::float_placement::{
     topbottom_float_outer_margin_left_hu, topbottom_flow_vertical_offset_hu,
 };
 
-/// Complete inline frame, including caption extents and row growth
+/// Owns a whole inline frame and its resolved cell grid, excluding outer margins.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AtomicTacTableOccupancy {
     pub(crate) row_heights: Vec<f64>,
+    col_widths: Vec<f64>,
+    shared_grid: bool,
     pub(crate) width: f64,
     pub(crate) height: f64,
     pub(crate) baseline: f64,
+}
+crate::storage::clone_fields!(AtomicTacTableOccupancy, {row_heights, col_widths, shared_grid, width, height, baseline});
+
+/// Resolves a fully constrained shared grid from authored cell extents.
+/// Rejects conflicting, overlapping and underdetermined grids without uniform fills.
+fn resolve_spaced_inline_grid(table: &crate::model::table::Table, dpi: f64) -> Option<Vec<f64>> {
+    let rows = usize::from(table.row_count);
+    let cols = usize::from(table.col_count);
+    if super::border_rendering::TableGridTooLarge::check(rows, cols).is_err()
+        || !table.common.treat_as_char
+        || table.cell_spacing <= 0
+        || table.page_break != TablePageBreak::None
+        || rows == 0
+        || cols == 0
+    {
+        return None;
+    }
+    let spacing = i64::from(table.cell_spacing);
+    let mut edges = vec![Vec::new(); cols + 1];
+    let mut covered = vec![false; rows * cols];
+    for cell in &table.cells {
+        let row = usize::from(cell.row);
+        let col = usize::from(cell.col);
+        let end_row = row + usize::from(cell.row_span);
+        let end_col = col + usize::from(cell.col_span);
+        if cell.width == 0
+            || cell.width > i32::MAX as u32
+            || cell.row_span == 0
+            || cell.col_span == 0
+            || end_row > rows
+            || end_col > cols
+            || i64::from(table.physical_cell_width_hu(cell))
+                <= spacing * i64::from(cell.col_span - 1)
+        {
+            return None;
+        }
+        for r in row..end_row {
+            for c in col..end_col {
+                if std::mem::replace(&mut covered[r * cols + c], true) {
+                    return None;
+                }
+            }
+        }
+        // Boundary coordinates include the gap after each column.
+        let extent = i64::from(table.physical_cell_width_hu(cell)) + spacing;
+        edges[col].push((end_col, extent));
+        edges[end_col].push((col, -extent));
+    }
+    if covered.iter().any(|&cell| !cell) {
+        return None;
+    }
+    let mut boundaries = vec![None; cols + 1];
+    boundaries[0] = Some(0_i64);
+    let mut pending = vec![0];
+    while let Some(start) = pending.pop() {
+        let origin = boundaries[start]?;
+        for &(end, extent) in &edges[start] {
+            let position = origin + extent;
+            if let Some(previous) = boundaries[end] {
+                if previous != position {
+                    return None;
+                }
+            } else {
+                boundaries[end] = Some(position);
+                pending.push(end);
+            }
+        }
+    }
+    boundaries
+        .windows(2)
+        .map(|pair| {
+            let width = pair[1]? - pair[0]? - spacing;
+            (width > 0 && width <= i64::from(i32::MAX))
+                .then(|| super::hwpunit_to_px(width as i32, dpi))
+        })
+        .collect()
 }
 
 pub(crate) fn atomic_tac_table_occupancy(
     table: &crate::model::table::Table,
     styles: &ResolvedStyleSet,
     dpi: f64,
+    measured: Option<&MeasuredTable>,
 ) -> AtomicTacTableOccupancy {
     let engine = super::LayoutEngine::new(dpi);
-    let row_heights = engine.resolve_row_heights(
-        table,
-        table.col_count as usize,
-        table.row_count as usize,
-        None,
-        styles,
-        true,
-    );
-    let frame_height = row_heights.iter().sum::<f64>()
-        + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
-            * row_heights.len().saturating_sub(1) as f64;
-    let mut width = super::hwpunit_to_px(table.flow_width_hu() as i32, dpi)
-        + super::hwpunit_to_px(table.cell_spacing as i32, dpi)
-            * table.col_count.saturating_sub(1) as f64;
+    let shared_grid = resolve_spaced_inline_grid(table, dpi);
+    let row_heights = if shared_grid.is_some() {
+        // Whole cell frames retain authored/content rows before spacing bands.
+        let mut rows = engine.resolve_row_heights(
+            table,
+            table.col_count as usize,
+            table.row_count as usize,
+            None,
+            styles,
+            true,
+        );
+        if let Some(measured) = measured {
+            for (row, &content) in rows.iter_mut().zip(&measured.row_heights) {
+                *row = row.max(content);
+            }
+        }
+        rows
+    } else {
+        engine.resolve_row_heights(
+            table,
+            table.col_count as usize,
+            table.row_count as usize,
+            measured,
+            styles,
+            true,
+        )
+    };
+    let shared = shared_grid.is_some();
+    let col_widths = shared_grid
+        .unwrap_or_else(|| engine.resolve_column_widths(table, table.col_count as usize));
+    let spacing = super::hwpunit_to_px(table.cell_spacing as i32, dpi);
+    // Paint starts one spacing band in and adds one after every physical row.
+    let frame_height = row_heights.iter().sum::<f64>() + spacing * (row_heights.len() + 1) as f64;
+    let mut width = if shared {
+        col_widths.iter().sum::<f64>() + spacing * (usize::from(table.col_count) + 1) as f64
+    } else {
+        let mut boundaries = vec![spacing; col_widths.len() + 1];
+        for (index, width) in col_widths.iter().enumerate() {
+            boundaries[index + 1] = boundaries[index] + width + spacing;
+        }
+        let fallback = boundaries.last().copied().unwrap_or(0.0);
+        let rows = super::border_rendering::build_row_col_x(
+            table,
+            &col_widths,
+            usize::from(table.col_count),
+            usize::from(table.row_count),
+            spacing,
+            dpi,
+            engine.render_table_width_scale(table),
+        );
+        rows.map_or(fallback, |rows| {
+            super::table_grid_width::resolved_table_width(
+                &rows,
+                fallback,
+                super::hwpunit_to_px(table.common.width as i32, dpi)
+                    * engine.render_table_width_scale(table),
+            )
+        })
+    };
     let mut height = frame_height;
     let mut baseline = frame_height * 0.85;
     let caption_height = crate::renderer::composer::caption_height_px(&table.caption, dpi);
@@ -132,8 +257,15 @@ pub(crate) fn atomic_tac_table_occupancy(
         }
     }
 
+    // Align the complete occupied box, including authored outer margins.
+    let top = super::hwpunit_to_px(i32::from(table.outer_margin_top), dpi);
+    let bottom = super::hwpunit_to_px(i32::from(table.outer_margin_bottom), dpi);
+    baseline += 0.85 * (top + bottom) - top;
+
     AtomicTacTableOccupancy {
         row_heights,
+        col_widths,
+        shared_grid: shared,
         width,
         height,
         baseline,
@@ -3847,7 +3979,7 @@ impl LayoutEngine {
             host_char_border_fill_id,
             false,
             None,
-            Some(&occupancy.row_heights),
+            Some(occupancy),
         )
     }
 
@@ -3882,8 +4014,16 @@ impl LayoutEngine {
         wrapper_margin_already_applied: bool,
         // 펼친 투명 래퍼 대신 그리는 표의 셀 내용 주소 기준. 그 밖에는 None이다.
         unwrapped_cell_ctx: Option<CellContext>,
-        atomic_rows: Option<&[f64]>,
+        atomic_frame: Option<&AtomicTacTableOccupancy>,
     ) -> f64 {
+        if super::border_rendering::TableGridTooLarge::check(
+            usize::from(table.row_count),
+            usize::from(table.col_count),
+        )
+        .is_err()
+        {
+            return if depth == 0 { y_start } else { 0.0 };
+        }
         // [#6929] 진입 시점의 단 상태 — 이후 이 함수가 자식을 붙이므로 먼저 찍어 둔다.
         let column_is_empty_on_entry = col_node.children.is_empty();
         // 확정된 자식 원점으로 배치하면서 가용 높이만 이전 흐름 원점에서 재면,
@@ -3918,6 +4058,7 @@ impl LayoutEngine {
         // 정렬 마커는 허용하되 배치 소유자가 여러 개면 외곽 셀을 유지한다.
         // 측정·whole·partial 경로는 같은 단일 자식 계약을 사용한다.
         if host_char_border_fill_id.fill_id == 0
+            && !atomic_frame.is_some_and(|frame| frame.shared_grid)
             && table.row_count == 1
             && table.col_count == 1
             && table.cells.len() == 1
@@ -4244,24 +4385,32 @@ impl LayoutEngine {
         let cell_spacing = hwpunit_to_px(table.cell_spacing as i32, self.dpi);
 
         // ── 1. 열 폭 + 행 높이 계산 ──
-        let mut col_widths = self.resolve_column_widths(table, col_count);
-        let row_heights = atomic_rows.map(|rows| rows.to_vec()).unwrap_or_else(|| {
-            self.resolve_row_heights(
-                table,
-                col_count,
-                row_count,
-                measured_table,
-                styles,
-                depth > 0 || table.common.treat_as_char,
-            )
-        });
+        let mut col_widths = atomic_frame
+            .map(|frame| frame.col_widths.clone())
+            .unwrap_or_else(|| self.resolve_column_widths(table, col_count));
+        let row_heights = atomic_frame
+            .map(|frame| frame.row_heights.clone())
+            .unwrap_or_else(|| {
+                self.resolve_row_heights(
+                    table,
+                    col_count,
+                    row_count,
+                    measured_table,
+                    styles,
+                    depth > 0 || table.common.treat_as_char,
+                )
+            });
         let source_reservation_height = measured_table
             .and_then(|measured| measured.row_frame_heights.as_ref())
-            .filter(|rows| nested_split.is_none() && rows.len() == row_count)
+            .filter(|rows| {
+                atomic_frame.is_none() && nested_split.is_none() && rows.len() == row_count
+            })
             .map(|_| row_heights.iter().sum::<f64>() + cell_spacing * (row_count + 1) as f64);
         let row_heights = measured_table
             .and_then(|measured| measured.row_frame_heights.as_ref())
-            .filter(|rows| nested_split.is_none() && rows.len() == row_count)
+            .filter(|rows| {
+                atomic_frame.is_none() && nested_split.is_none() && rows.len() == row_count
+            })
             .cloned()
             .unwrap_or(row_heights);
         if std::env::var("RHWP_DIAG_TAC").is_ok() {
@@ -4400,17 +4549,26 @@ impl LayoutEngine {
         let scalar_replay_terminal_boundary_unit = nested_split
             .is_some_and(|split| scalar_single_row_fragment && split.replay_terminal_boundary_unit);
         let scalar_single_row_continuation = scalar_single_row_continuation_offset.is_some();
-        let mut row_col_x = match build_row_col_x(
-            table,
-            &col_widths,
-            col_count,
-            row_count,
-            cell_spacing,
-            self.dpi,
-            self.render_table_width_scale(table),
-        ) {
-            Ok(grid) => grid,
-            Err(_) => return if depth == 0 { y_start } else { 0.0 },
+        let mut row_col_x = if atomic_frame.is_some_and(|frame| frame.shared_grid) {
+            super::border_rendering::RowColumnGeometry::uniform(
+                col_x.clone(),
+                col_widths.clone(),
+                row_count,
+                cell_spacing,
+            )
+        } else {
+            match build_row_col_x(
+                table,
+                &col_widths,
+                col_count,
+                row_count,
+                cell_spacing,
+                self.dpi,
+                self.render_table_width_scale(table),
+            ) {
+                Ok(grid) => grid,
+                Err(_) => return if depth == 0 { y_start } else { 0.0 },
+            }
         };
         let independent_col_row_y: Option<Vec<Vec<f64>>> = None;
 
@@ -5798,6 +5956,15 @@ impl LayoutEngine {
                         styles,
                         inner_width,
                     );
+                    let line_based = if cell.paragraphs.iter().all(|para| para.controls.is_empty())
+                    {
+                        super::super::height_measurer::stored_text_cell_growth_extent(
+                            cell, line_based, pad_top, pad_bottom, self.dpi,
+                        )
+                        .unwrap_or(line_based)
+                    } else {
+                        line_based
+                    };
                     // [#3386] 저장 cellSz 가 저장 줄 흐름보다 작은 모순 셀은 한글이
                     // 줄 흐름 + 상하 여백으로 재성장한다 (156678235 p5 내부 표 r0:
                     // cellSz 3.8px·lineseg 14.7px → 한글 PDF 실측 18.4px = 14.7+1.9×2).
@@ -19705,6 +19872,14 @@ impl LayoutEngine {
         if nested_bottom > 0.0 {
             return nested_bottom;
         }
+        // A successor-authenticated source frame can close inside a regenerated
+        // paragraph's trailing gap before the ordinary reflow trim policy applies.
+        let generated_frame_trim = self.generated_paragraph_saved_frame_trailing_trim(
+            table, cell, units, start_cut, end_cut, styles,
+        );
+        if generated_frame_trim > 0.0 {
+            return generated_frame_trim;
+        }
         let reflow_trim = self.reflow_cut_trailing_spacing(cell, table, units, end_cut, styles);
         if reflow_trim > 0.0 {
             return reflow_trim;
@@ -20024,6 +20199,100 @@ impl LayoutEngine {
             }
         }
         0.0
+    }
+
+    /// Transfers only the trailing gap that crosses a saved opening frame.
+    /// Requires independent host and successor ownership of that opening frame.
+    fn generated_paragraph_saved_frame_trailing_trim(
+        &self,
+        table: &crate::model::table::Table,
+        cell: &crate::model::table::Cell,
+        units: &[CellUnit],
+        start_cut: usize,
+        end_cut: usize,
+        styles: &ResolvedStyleSet,
+    ) -> f64 {
+        let profile = self.profile.get();
+        if !(profile.hwpx_stored_layout() || profile.hwp5_stored_pagination_layout())
+            || profile.session_edited()
+            || self
+                .render_normalization
+                .borrow()
+                .table_text_reflowed(table)
+            || table.common.treat_as_char
+            || table.page_break != TablePageBreak::RowBreak
+            || table.common.text_wrap != crate::model::shape::TextWrap::TopAndBottom
+            || table.common.height == 0
+            || table.common.height > i32::MAX as u32
+            || start_cut != 0
+            || end_cut == 0
+            || end_cut >= units.len()
+            || cell.dirty_flag
+            || cell
+                .paragraphs
+                .iter()
+                .any(|para| para.stored_text_partition_is_dirty() || para.cell_format_vpos_dirty)
+        {
+            return 0.0;
+        }
+        let closing = &units[end_cut - 1];
+        let next = &units[end_cut];
+        let Some(para) = cell.paragraphs.get(closing.para_idx) else {
+            return 0.0;
+        };
+        if closing.empty_spacer
+            || closing.vis_start >= closing.vis_end
+            || closing.mixed_nested_fragment
+            || closing.non_inline_control_range.is_some()
+            || next.para_idx != closing.para_idx + 1
+            || next.vis_start != 0
+            || !para.controls.is_empty()
+            || para.line_segs.is_empty()
+            || para.line_segs.iter().any(|line| {
+                line.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
+            })
+        {
+            return 0.0;
+        }
+        let Some(frame_hu) = self
+            .render_normalization
+            .borrow()
+            .stored_opening_frame_height_hu(table)
+        else {
+            return 0.0;
+        };
+        let (left, right, top, bottom) = self.resolve_cell_padding(cell, table);
+        let width =
+            hwpunit_to_px(cell.width as i32, self.dpi) * self.render_table_width_scale(table);
+        let inner_width =
+            crate::renderer::composer::cell_inner_text_width(width, left, right, self.dpi);
+        let comp = self.compose_cell_unit_paragraph(para, cell.text_direction, inner_width, styles);
+        if closing.vis_end != comp.lines.len() {
+            return 0.0;
+        }
+        let Some(line) = comp.lines.last() else {
+            return 0.0;
+        };
+        let after = styles
+            .para_styles
+            .get(para.para_shape_id as usize)
+            .map_or(0.0, |style| style.spacing_after);
+        let trailing =
+            (hwpunit_to_px(line.line_spacing.max(0), self.dpi) + after).min(closing.height);
+        let rows = table.get_raw_row_heights();
+        let preceding = rows
+            .iter()
+            .take(usize::from(cell.row))
+            .map(|&height| hwpunit_to_px(height as i32, self.dpi))
+            .sum::<f64>()
+            + hwpunit_to_px(table.cell_spacing as i32, self.dpi) * f64::from(cell.row);
+        let frame = hwpunit_to_px(frame_hu as i32, self.dpi);
+        let prefix = units[..end_cut].iter().map(|unit| unit.height).sum::<f64>();
+        let excess = preceding + prefix + top + bottom - frame;
+        if frame <= preceding || excess <= 0.0 || excess > trailing {
+            return 0.0;
+        }
+        excess
     }
 
     /// 두 문단의 원점0 줄은 줄 상자·중간 간격·패딩이 cellSz를 닫을 때 별도 프레임을 소유한다.
@@ -23599,8 +23868,12 @@ impl LayoutEngine {
             let mut h = 0.0f64;
             let flow_range =
                 self.cell_cut_flow_range(cell, table, &units, start, units.len(), styles);
+            let mut stop_after_saved_cut = false;
             while j < units.len() {
                 let u = &units[j];
+                if stop_after_saved_cut && !u.hard_break_before {
+                    break;
+                }
                 // 시작 유닛(j==start)은 항상 소비 — 진행 보장.
                 if j < flow_range.start {
                     j += 1;
@@ -23647,6 +23920,9 @@ impl LayoutEngine {
                             allow_midpage_reset_absorb,
                         )
                     {
+                        if stop_after_saved_cut {
+                            break;
+                        }
                         h += u.height;
                         j += 1;
                         continue;
@@ -23665,6 +23941,9 @@ impl LayoutEngine {
                     hit_hard_break = true;
                     break;
                 }
+                if stop_after_saved_cut {
+                    break;
+                }
                 // [#6368] `advance_row_cut_inner` 기본 컷과 같은 부동소수 끝자리
                 // 관용(80168_regulatory 실측 0.0133px) — 끝자리 초과만으로 마지막
                 // 줄이 다음 쪽으로 이월되지 않게 한다. 관용 폭은 상수 문서 참조.
@@ -23677,15 +23956,39 @@ impl LayoutEngine {
                         );
                     }
                 }
+                let trailing_trim = self.native_saved_reset_cut_trailing_trim(
+                    table,
+                    cell,
+                    &units,
+                    start,
+                    j + 1,
+                    styles,
+                );
+                let saved_cut_height = (trailing_trim > 0.0)
+                    .then(|| self.cell_cut_visible_height(cell, table, styles, start, j + 1));
+                let required_height =
+                    saved_cut_height.map_or(h + u.height, |height| height + trailing_trim);
+                if required_height > avail_height + ROW_CUT_CAPACITY_FP_EPSILON_PX
+                    && saved_cut_height.is_some_and(|height| {
+                        height <= avail_height + ROW_CUT_CAPACITY_FP_EPSILON_PX
+                    })
+                {
+                    // Let the next hard-break policy rewind raw advances before accounting.
+                    h += u.height;
+                    j += 1;
+                    hit_hard_break = true;
+                    stop_after_saved_cut = true;
+                    continue;
+                }
                 let capacity_tolerance = capacity_tolerance::for_next_unit(
                     cell,
                     u,
                     j.saturating_sub(start) + 1,
-                    h + u.height,
+                    required_height,
                     avail_height,
                     ROW_CUT_CAPACITY_FP_EPSILON_PX,
                 );
-                if j > start && h + u.height > avail_height + capacity_tolerance {
+                if j > start && required_height > avail_height + capacity_tolerance {
                     if std::env::var("RHWP_DIAG_6368").is_ok() {
                         let over = h + u.height - avail_height;
                         if over <= 2.0 {
@@ -23748,11 +24051,14 @@ impl LayoutEngine {
             if j > start {
                 h += nested_header;
             }
-            if self
-                .native_first_line_restart_cut_trailing_trim(table, cell, &units, start, j, styles)
-                > 0.0
+            if stop_after_saved_cut
+                || self.native_saved_reset_cut_trailing_trim(table, cell, &units, start, j, styles)
+                    > 0.0
+                || self.native_first_line_restart_cut_trailing_trim(
+                    table, cell, &units, start, j, styles,
+                ) > 0.0
             {
-                // 줄 뒤 간격을 뺀 실제 컷 상자와 안 여백을 paint와 같은 결과로 예약한다.
+                // Recompute the selected cut after rewinds, including painted padding.
                 h = self.cell_cut_visible_height(cell, table, styles, start, j);
             }
             if j < units.len() {

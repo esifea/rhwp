@@ -1,5 +1,35 @@
 use super::DocumentCore;
+use crate::model::{
+    control::Control,
+    identity::walk::{walk, Node},
+    paragraph::{LineSeg, Paragraph},
+};
 use crate::{error::HwpError, renderer::font_environment::FontEnvironment};
+
+fn invalidate_generated_cell_lines(
+    paragraphs: &mut [Paragraph],
+    environment: Option<&std::sync::Arc<str>>,
+) {
+    walk(paragraphs, |node| {
+        if let Node::Control(Control::Table(table)) = node {
+            for cell in &mut table.cells {
+                for para in &mut cell.paragraphs {
+                    if !para.line_segs.is_empty()
+                        && para
+                            .line_segs
+                            .iter()
+                            .all(|line| line.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0)
+                    {
+                        para.generated_cell_lines_invalidated =
+                            para.generated_cell_lines_environment.as_ref() != environment;
+                    }
+                }
+            }
+        }
+        Ok(())
+    })
+    .expect("generated cell-line invalidation is infallible");
+}
 
 impl DocumentCore {
     /// 호스트가 실제 프로그램을 준비할 문서 후보와 현재 명시 환경을 반환한다.
@@ -21,8 +51,18 @@ impl DocumentCore {
         serde_json::to_string(&environment).map_err(|e| HwpError::RenderError(e.to_string()))
     }
 
+    /// Invalidates generated partitions published under a different canonical environment.
+    pub(crate) fn invalidate_generated_cell_partitions(&mut self) {
+        let environment = self.styles.generated_line_environment.as_ref();
+        for section in &mut self.document.sections {
+            invalidate_generated_cell_lines(&mut section.paragraphs, environment);
+            for master in &mut section.section_def.master_pages {
+                invalidate_generated_cell_lines(&mut master.paragraphs, environment);
+            }
+        }
+    }
+
     /// Change the rendering environment without modifying document fonts or saved lines.
-    /// None restores the portable default. Repeating an environment is a no-op.
     pub fn set_font_environment(
         &mut self,
         environment: Option<FontEnvironment>,

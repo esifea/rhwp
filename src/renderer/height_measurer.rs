@@ -797,6 +797,41 @@ pub(crate) fn reflowed_tac_table_host_trailing_spacing_px(
     )
 }
 
+/// Return stored text extent when its cell-relative ladder outgrows the declaration
+pub(crate) fn stored_text_cell_growth_extent(
+    cell: &crate::model::table::Cell,
+    additive: f64,
+    pad_top: f64,
+    pad_bottom: f64,
+    dpi: f64,
+) -> Option<f64> {
+    if cell.height >= 0x8000_0000
+        || cell.paragraphs.is_empty()
+        || cell
+            .paragraphs
+            .iter()
+            .any(crate::renderer::para_has_no_stored_line_segs)
+    {
+        return None;
+    }
+    let first = cell.paragraphs.first()?.line_segs.first()?;
+    if first.vertical_pos <= 0
+        || hwpunit_to_px(first.vertical_pos, dpi) >= hwpunit_to_px(cell.height as i32, dpi)
+    {
+        return None;
+    }
+    let extent = cell
+        .paragraphs
+        .iter()
+        .flat_map(|para| &para.line_segs)
+        .filter(|seg| seg.vertical_pos >= 0 && seg.line_height > 0)
+        .map(|seg| hwpunit_to_px(seg.vertical_pos.saturating_add(seg.line_height), dpi))
+        .fold(0.0_f64, f64::max);
+    (extent > additive + 0.5
+        && extent + pad_top + pad_bottom > hwpunit_to_px(cell.height as i32, dpi) + 0.5)
+        .then_some(extent)
+}
+
 /// 표의 측정된 높이 정보
 #[derive(Debug, Clone)]
 pub struct MeasuredTable {
@@ -4642,23 +4677,10 @@ let body_height=match nested_body_heights
                     // 선언 안에 들어가는 ladder 는 종전 회계를 그대로 둔다.
                     let ladder_exceeds_declared_text_cell = non_inline_h <= 0.0
                         && wrap_bottom <= 0.0
-                        && stored_extent > additive + 0.5
-                        && cell.height < 0x8000_0000
-                        // 첫 줄이 **셀 안에서** 시작해야 한다 — 별지 서식처럼 저장
-                        // vpos 가 셀 상대가 아니라 **표 누적**인 문서가 있고
-                        // (74312 pi=73: 셀 48.6px 인데 vpos 22390HU=298.5px),
-                        // 그 값을 extent 로 쓰면 행이 수백 px 로 부푼다.
-                        && cell
-                            .paragraphs
-                            .first()
-                            .and_then(|pp| pp.line_segs.first())
-                            .is_some_and(|seg| {
-                                seg.vertical_pos > 0
-                                    && hwpunit_to_px(seg.vertical_pos, self.dpi)
-                                        < hwpunit_to_px(cell.height as i32, self.dpi)
-                            })
-                        && stored_extent + pad_top + pad_bottom
-                            > hwpunit_to_px(cell.height as i32, self.dpi) + 0.5;
+                        && stored_text_cell_growth_extent(
+                            cell, additive, pad_top, pad_bottom, self.dpi,
+                        )
+                        .is_some();
                     // [#6194 진단] 이 갈래의 성분과 게이트를 그대로 찍는다 — 동작 불변.
                     if std::env::var("RHWP_DIAG_ROWH").is_ok() && depth == 0 {
                         eprintln!(

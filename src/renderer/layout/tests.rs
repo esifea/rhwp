@@ -725,6 +725,7 @@ fn test_layout_with_composed_styles() {
         resolved_dpi: None,
         page_number_char_style_id: None,
         page_number_font_is_hft: false,
+        generated_line_environment: None,
         hwp3_variant: false,
         hft_ascii_halfwidth: false,
         char_styles: vec![
@@ -883,6 +884,7 @@ fn test_layout_multi_run_x_position() {
         resolved_dpi: None,
         page_number_char_style_id: None,
         page_number_font_is_hft: false,
+        generated_line_environment: None,
         hwp3_variant: false,
         hft_ascii_halfwidth: false,
         char_styles: vec![
@@ -991,6 +993,7 @@ fn test_resolved_to_text_style() {
         resolved_dpi: None,
         page_number_char_style_id: None,
         page_number_font_is_hft: false,
+        generated_line_environment: None,
         hwp3_variant: false,
         hft_ascii_halfwidth: false,
         char_styles: vec![ResolvedCharStyle {
@@ -1036,6 +1039,7 @@ fn test_resolved_to_text_style_with_ratio() {
         resolved_dpi: None,
         page_number_char_style_id: None,
         page_number_font_is_hft: false,
+        generated_line_environment: None,
         hwp3_variant: false,
         hft_ascii_halfwidth: false,
         char_styles: vec![ResolvedCharStyle {

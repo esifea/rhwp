@@ -263,6 +263,60 @@ pub(crate) struct MetricLookupDecision<'a> {
     pub(crate) entry_index: usize,
 }
 
+/// 독립 출처와 기존 폭 표의 동일성을 확인한 정규 face의 hhea 값
+#[derive(Debug)]
+pub(crate) struct QualifiedVerticalMetric {
+    entry_index: usize,
+    name: &'static str,
+    accepted_names: &'static [&'static str],
+    units_per_em: u16,
+    ascent: i16,
+    descent: i16,
+    line_gap: i16,
+}
+
+impl QualifiedVerticalMetric {
+    /// 원본 em 단위의 하단 여백을 반환하며 잘못된 메타데이터는 거부
+    pub(crate) fn clearance(&self, font_size: f64) -> Option<f64> {
+        if self.units_per_em == 0
+            || self.ascent <= 0
+            || self.descent > 0
+            || self.line_gap < 0
+            || !font_size.is_finite()
+            || font_size <= 0.0
+        {
+            return None;
+        }
+        let value = -f64::from(self.descent) / f64::from(self.units_per_em) * font_size;
+        value.is_finite().then_some(value)
+    }
+}
+
+include!("font_vertical_metrics_generated.rs");
+
+/// Returns independently qualified vertical metrics for an exact regular face.
+fn qualified_vertical_metric(
+    name: &str,
+    bold: bool,
+    italic: bool,
+) -> Option<&'static QualifiedVerticalMetric> {
+    if bold || italic {
+        return None;
+    }
+    let decision = find_metric_decision(name, bold, italic)?;
+    if decision.match_kind != MetricMatchKind::Exact {
+        return None;
+    }
+    QUALIFIED_VERTICAL_METRICS.iter().find(|record| {
+        record.entry_index == decision.entry_index
+            && record.name == decision.metric.name
+            && record.units_per_em == decision.metric.em_size
+            && !decision.metric.bold
+            && !decision.metric.italic
+            && record.accepted_names.contains(&name)
+    })
+}
+
 /// Canonical font rule projection에서 metric alias와 W2 ruleId를 함께 해소한다.
 fn resolve_projected_metric_alias(name: &str) -> (&str, Option<&'static str>) {
     match find_font_rule_layout_metric(name) {

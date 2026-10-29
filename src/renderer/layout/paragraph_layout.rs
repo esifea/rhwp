@@ -3370,6 +3370,28 @@ impl LayoutEngine {
                     else {
                         continue;
                     };
+                    if let Some((_, occupancy)) =
+                        plan.table_frames.iter().find(|(owner, _)| owner == control)
+                    {
+                        self.layout_atomic_tac_table(
+                            tree,
+                            col_node,
+                            table,
+                            section_index,
+                            styles,
+                            col_area,
+                            y + margin_top,
+                            bin_data_content,
+                            0,
+                            (para_index, *control),
+                            Alignment::Left,
+                            None,
+                            x + margin_left,
+                            Self::standalone_table_char_border_fill(Some(para), table, styles),
+                            occupancy,
+                        );
+                        continue;
+                    }
                     let measured = measured_tables
                         .iter()
                         .find(|m| m.para_index == para_index && m.control_index == *control);
@@ -5031,6 +5053,7 @@ impl LayoutEngine {
                 para,
                 styles.para_styles.get(comp_ref.para_style_id as usize),
                 start_line,
+                end_line_adjusted == comp_ref.lines.len(),
             )
             .or(stored_axis_spacing);
             return self.layout_composed_paragraph_in_frame(
@@ -5795,7 +5818,7 @@ impl LayoutEngine {
                             // Use value which is calculated from cache_free_tac_host_lines directly
                             Control::Table(table) if generated_tac_rows => {
                                 let occupancy = super::table_layout::atomic_tac_table_occupancy(
-                                    table, styles, self.dpi,
+                                    table, styles, self.dpi, None,
                                 );
                                 Some(occupancy.width)
                             }
@@ -9333,11 +9356,23 @@ impl LayoutEngine {
                             (x + leading_end, run_end - leading_end)
                         } else {
                             let sw = estimate_text_width(&leading_spaces, &text_style);
-                            (x + sw, estimate_text_width(content, &text_style))
+                            (
+                                x + sw,
+                                estimate_text_width(
+                                    content,
+                                    &text_style.for_text_fragment(leading_count),
+                                ),
+                            )
                         }
                     } else {
                         let sw = estimate_text_width(&leading_spaces, &text_style);
-                        (x + sw, estimate_text_width(content, &text_style))
+                        (
+                            x + sw,
+                            estimate_text_width(
+                                content,
+                                &text_style.for_text_fragment(leading_count),
+                            ),
+                        )
                     }
                 } else {
                     (x, full_width)
@@ -10097,7 +10132,7 @@ impl LayoutEngine {
                                     crate::renderer::composer::has_generated_tac_host_rows(p).then(
                                         || {
                                             super::table_layout::atomic_tac_table_occupancy(
-                                                t, styles, self.dpi,
+                                                t, styles, self.dpi, None,
                                             )
                                         },
                                     );
@@ -11304,7 +11339,7 @@ impl LayoutEngine {
                                     crate::renderer::composer::has_generated_tac_host_rows(p).then(
                                         || {
                                             super::table_layout::atomic_tac_table_occupancy(
-                                                t, styles, self.dpi,
+                                                t, styles, self.dpi, None,
                                             )
                                         },
                                     );

@@ -65,6 +65,11 @@ fn fixture(
     table.common.flow_with_text = true;
     table.common.text_wrap = rhwp::model::shape::TextWrap::TopAndBottom;
     table.common.vert_rel_to = rhwp::model::shape::VertRelTo::Para;
+    if split {
+        // Match generated_cell_continuation/long-cell.hwpx's non-TAC CELL owner.
+        table.common.treat_as_char = false;
+        table.common.horz_rel_to = rhwp::model::shape::HorzRelTo::Column;
+    }
     table.padding.top = 150;
     table.padding.bottom = 150;
     for row in 0..rows {
@@ -471,7 +476,10 @@ fn long_text() -> String {
 
 /// One saved label and one fresh cell far taller than the small page body.
 fn long_cell_fixture() -> Document {
-    let mut table = shell(1, 2, 30000, 1800, TablePageBreak::CellBreak);
+    // Match generated_cell_continuation/long-cell.hwpx's non-TAC CELL owner.
+    let mut table = shell(1, 2, 30000, 1800, TablePageBreak::RowBreak);
+    table.common.treat_as_char = false;
+    table.common.horz_rel_to = rhwp::model::shape::HorzRelTo::Column;
     table
         .cells
         .push(cell_at(0, 0, 15000, 1800, paragraph("Label0", true)));

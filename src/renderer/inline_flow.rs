@@ -128,12 +128,14 @@ pub struct InlineFlowPlan {
     pub end: f64,
     pub boxes: Vec<InlineFlowBox>,
     pub(crate) rows: Vec<InlineFlowRow>,
+    /// Resolved grids consumed by both whole-row reservation and atomic paint.
+    pub(crate) table_frames: Vec<(usize, super::layout::table_layout::AtomicTacTableOccupancy)>,
     /// 원래 가용 폭/높이에 실제로 간섭한 제외 영역이 있었는가.
     pub(crate) carved: bool,
     next_row_top: f64,
     fallback_font_size: f64,
 }
-crate::storage::clone_fields!(InlineFlowPlan, {stored_empty_host, stored_float_host, text_rows, square_host_control, text_spacing_before, square_host_placement, square_host_exclusion, floating_shapes, start, end, boxes, rows, carved, next_row_top, fallback_font_size});
+crate::storage::clone_fields!(InlineFlowPlan, {table_frames, stored_empty_host, stored_float_host, text_rows, square_host_control, text_spacing_before, square_host_placement, square_host_exclusion, floating_shapes, start, end, boxes, rows, carved, next_row_top, fallback_font_size});
 
 impl InlineFlowPlan {
     /// 확정한 행의 물리 하단. 다음 줄 전진과 문단 뒤 여백을 구분한다.
@@ -272,6 +274,7 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
     storage.stable_sort_by(&mut controls, |a, b| (a.1, a.0).cmp(&(b.1, b.0)))?;
     let mut controls = controls.into_iter().peekable();
     let mut atoms = Vec::new();
+    let mut table_frames = Vec::new();
     for position in 0..=chars.len() {
         while controls.peek().is_some_and(|&(_, p)| p <= position) {
             let Some((ci, _)) = controls.next() else {
@@ -303,14 +306,48 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
                     let right = hwpunit_to_px(i32::from(table.outer_margin_right), frame.dpi);
                     let top = hwpunit_to_px(i32::from(table.outer_margin_top), frame.dpi);
                     let bottom = hwpunit_to_px(i32::from(table.outer_margin_bottom), frame.dpi);
-                    let height = measured.total_height + top + bottom;
-                    let metrics = super::composer::frame_metrics_for_line(
-                        height,
-                        height,
-                        style.line_spacing_type,
-                        style.line_spacing,
-                        frame.dpi,
-                    );
+                    let generated_atomic = super::para_has_no_stored_line_segs(para)
+                        && table.page_break == crate::model::table::TablePageBreak::None;
+                    let (width, height, baseline) = if generated_atomic {
+                        let occupancy = super::layout::table_layout::atomic_tac_table_occupancy(
+                            table,
+                            styles,
+                            frame.dpi,
+                            Some(measured),
+                        );
+                        let metrics = (
+                            occupancy.width + left + right,
+                            occupancy.height + top + bottom,
+                            occupancy.baseline + top,
+                        );
+                        storage.push(&mut table_frames, (ci, occupancy))?;
+                        metrics
+                    } else {
+                        let height = measured.total_height + top + bottom;
+                        let metrics = super::composer::frame_metrics_for_line(
+                            height,
+                            height,
+                            style.line_spacing_type,
+                            style.line_spacing,
+                            frame.dpi,
+                        );
+                        let mut width = hwpunit_to_px(table.flow_width_hu() as i32, frame.dpi);
+                        if let Some(caption) = &table.caption {
+                            if matches!(
+                                caption.direction,
+                                crate::model::shape::CaptionDirection::Left
+                                    | crate::model::shape::CaptionDirection::Right
+                            ) {
+                                width += hwpunit_to_px(caption.width as i32, frame.dpi)
+                                    + hwpunit_to_px(caption.spacing as i32, frame.dpi);
+                            }
+                        }
+                        (
+                            width + left + right,
+                            height,
+                            hwpunit_to_px(metrics.baseline_distance, frame.dpi),
+                        )
+                    };
                     storage.push(
                         &mut atoms,
                         Atom::Box(InlineFlowBox {
@@ -321,11 +358,9 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
                             },
                             x: 0.0,
                             y: 0.0,
-                            width: hwpunit_to_px(table.common.width as i32, frame.dpi)
-                                + left
-                                + right,
+                            width,
                             height,
-                            baseline: hwpunit_to_px(metrics.baseline_distance, frame.dpi),
+                            baseline,
                         }),
                     )?;
                 }
@@ -424,6 +459,25 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
     let mut word_metrics = std::collections::BTreeMap::new();
     let mut attached_word_metrics = std::collections::BTreeMap::new();
     let spaces = separator_spaces::classify_with_storage(&atoms, &chars, storage)?;
+    let mut text_owned_spaces = std::collections::BTreeSet::new();
+    let mut text_owner = true;
+    for atom in &atoms {
+        match atom {
+            Atom::Box(item) if is_space(item, &chars) => {
+                if text_owner {
+                    if let InlineFlowContent::Text { range, .. } = &item.content {
+                        storage.insert_tree_set(&mut text_owned_spaces, range.start)?;
+                    }
+                }
+            }
+            Atom::Box(InlineFlowBox {
+                content: InlineFlowContent::Text { .. },
+                ..
+            }) => text_owner = true,
+            _ => text_owner = false,
+        }
+    }
+
     let mut index = 0;
     while index < atoms.len() {
         let Atom::Box(first) = &atoms[index] else {
@@ -476,6 +530,7 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
     let mut result = InlineFlowPlan {
         stored_empty_host: false,
         stored_float_host: false,
+        table_frames,
         text_rows: None,
         square_host_control: None,
         text_spacing_before: None,
@@ -607,7 +662,10 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
                         .unwrap_or_else(|| RowMetrics::default().with(&item)),
                     _ => RowMetrics::default().with(&item),
                 };
-                let moves_existing_row = if row.is_empty() {
+                let moves_existing_row = if row.is_empty()
+                    || (matches!(item.content, InlineFlowContent::Table { .. })
+                        && row.iter().all(|existing| is_space(existing, &chars)))
+                {
                     false
                 } else {
                     let Some(old) = row_geometry_with_storage(
@@ -641,6 +699,56 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
                         && !first_overhang_space)
                         || moves_existing_row)
                 {
+                    let mut prefix = Vec::new();
+                    if separator_spaces::has_flow_content(&row, &chars)
+                        && matches!(item.content, InlineFlowContent::Table { .. })
+                    {
+                        let next = paragraph_row_horizontal(&horizontal, style, false);
+                        let object = RowMetrics::default().with(&item);
+                        let mut occupied = object;
+                        let mut split = row.len();
+                        for space in row.iter().rev().take_while(|space| {
+                            matches!(&space.content, InlineFlowContent::Text { range, .. }
+                                if text_owned_spaces.contains(&range.start))
+                                && is_space(space, &chars)
+                                && space.width > 0.0
+                        }) {
+                            let candidate = occupied.with(space);
+                            let Some(placement) = place_row_with_storage(
+                                &result,
+                                &row[..split - 1],
+                                &horizontal,
+                                &exclusions,
+                                style,
+                                frame.dpi,
+                                RowEnding::Soft(&chars),
+                                storage,
+                            )?
+                            else {
+                                return Ok(None);
+                            };
+                            let Some(fits) = prefix_fits_with_storage(
+                                candidate,
+                                object,
+                                &next,
+                                placement.next_top,
+                                &exclusions,
+                                style,
+                                frame.dpi,
+                                storage,
+                            )?
+                            else {
+                                return Ok(None);
+                            };
+                            if !fits {
+                                break;
+                            }
+                            occupied = candidate;
+                            split -= 1;
+                        }
+                        storage.reserve(&mut prefix, row.len() - split)?;
+                        prefix.extend(row.drain(split..));
+                    }
                     let Some(()) = finish_row_with_storage(
                         &mut result,
                         &mut row,
@@ -654,7 +762,10 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
                     else {
                         return Ok(None);
                     };
-                    row_metrics = RowMetrics::default();
+                    row = prefix;
+                    row_metrics = row
+                        .iter()
+                        .fold(RowMetrics::default(), |metrics, item| metrics.with(item));
                 }
                 row_metrics = row_metrics.with(&item);
                 storage.push(&mut row, item)?;
@@ -685,19 +796,30 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
     Ok((result.start.is_finite() && result.end.is_finite()).then_some(result))
 }
 
-fn finish_row_with_storage<S: crate::storage::Storage>(
-    plan: &mut InlineFlowPlan,
-    row: &mut Vec<InlineFlowBox>,
+struct RowPlacement {
+    metrics: RowMetrics,
+    x: f64,
+    y: f64,
+    carved: bool,
+    available_width: f64,
+    next_top: f64,
+}
+
+fn is_space(item: &InlineFlowBox, chars: &[char]) -> bool {
+    matches!(&item.content, InlineFlowContent::Text { range, .. }
+        if !range.is_empty() && chars[range.clone()].iter().all(|ch| *ch == ' '))
+}
+
+fn place_row_with_storage<S: crate::storage::Storage>(
+    plan: &InlineFlowPlan,
+    row: &[InlineFlowBox],
     horizontal: &Range<f64>,
     exclusions: &[FrameExclusion],
     style: &ResolvedParaStyle,
     dpi: f64,
     ending: RowEnding<'_>,
     storage: &S,
-) -> Result<Option<()>, S::Error> {
-    if row.is_empty() {
-        return Ok(Some(()));
-    }
+) -> Result<Option<RowPlacement>, S::Error> {
     let mut row_metrics = row
         .iter()
         .fold(RowMetrics::default(), |metrics, item| metrics.with(item));
@@ -713,7 +835,6 @@ fn finish_row_with_storage<S: crate::storage::Storage>(
         row_metrics.baseline = hwpunit_to_px(metrics.baseline_distance, dpi);
         row_metrics.descent = hwpunit_to_px(metrics.line_height - metrics.baseline_distance, dpi);
     }
-    let baseline = row_metrics.baseline;
     let height = row_metrics.baseline + row_metrics.descent;
     if let Some(chars) = ending.trimmed_chars() {
         // 개행 메트릭 상자는 폭 0이며 후행 공백 조회를 막지 않는다.
@@ -729,7 +850,7 @@ fn finish_row_with_storage<S: crate::storage::Storage>(
             .sum::<f64>();
     }
     let row_horizontal = paragraph_row_horizontal(horizontal, style, plan.boxes.is_empty());
-    let Some((mut x, y, carved, available_width)) = row_geometry_with_storage(
+    let Some((x, y, carved, available_width)) = row_geometry_with_storage(
         row_metrics,
         &row_horizontal,
         plan.next_row_top,
@@ -741,16 +862,6 @@ fn finish_row_with_storage<S: crate::storage::Storage>(
     else {
         return Ok(None);
     };
-    plan.carved |= carved;
-    // 같은 확정 줄의 분배 전진을 측정 결과와 실제 글자 원점에 함께 보존한다.
-    let gaps = alignment::gaps_with_storage(
-        row,
-        ending,
-        style.alignment,
-        available_width - row_metrics.width,
-        storage,
-    )?;
-    row_metrics.width += gaps.iter().sum::<f64>();
     let has_table = row
         .iter()
         .any(|b| matches!(b.content, InlineFlowContent::Table { .. }));
@@ -769,6 +880,100 @@ fn finish_row_with_storage<S: crate::storage::Storage>(
         .map(|item| item.height)
         .reduce(f64::max)
         .unwrap_or(plan.fallback_font_size);
+    let metrics = super::composer::frame_metrics_for_line(
+        row_font_size,
+        plan.fallback_font_size,
+        style.line_spacing_type,
+        style.line_spacing,
+        dpi,
+    );
+    let gap = hwpunit_to_px(metrics.line_spacing, dpi);
+    // 표도 Percent의 부호 있는 간격을 소비한다. 표의 실제 점유 높이는
+    // rows에 보존하므로 다음 줄 원점을 물리 하단으로 clamp하지 않는다.
+    let signed_gap =
+        !has_table || style.line_spacing_type == crate::model::style::LineSpacingType::Percent;
+    let next_top = y + height + if signed_gap { gap } else { gap.max(0.0) };
+    Ok(Some(RowPlacement {
+        metrics: row_metrics,
+        x,
+        y,
+        carved,
+        available_width,
+        next_top,
+    }))
+}
+
+fn prefix_fits_with_storage<S: crate::storage::Storage>(
+    prefix_and_object: RowMetrics,
+    object: RowMetrics,
+    horizontal: &Range<f64>,
+    top: f64,
+    exclusions: &[FrameExclusion],
+    style: &ResolvedParaStyle,
+    dpi: f64,
+    storage: &S,
+) -> Result<Option<bool>, S::Error> {
+    if prefix_and_object.width > horizontal.end - horizontal.start + 0.01 {
+        return Ok(Some(false));
+    }
+    let Some(bare) =
+        row_geometry_with_storage(object, horizontal, top, exclusions, style, dpi, storage)?
+    else {
+        return Ok(None);
+    };
+    let Some(prefixed) = row_geometry_with_storage(
+        prefix_and_object,
+        horizontal,
+        top,
+        exclusions,
+        style,
+        dpi,
+        storage,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(prefixed.1 <= bare.1 + 0.01))
+}
+
+fn finish_row_with_storage<S: crate::storage::Storage>(
+    plan: &mut InlineFlowPlan,
+    row: &mut Vec<InlineFlowBox>,
+    horizontal: &Range<f64>,
+    exclusions: &[FrameExclusion],
+    style: &ResolvedParaStyle,
+    dpi: f64,
+    ending: RowEnding<'_>,
+    storage: &S,
+) -> Result<Option<()>, S::Error> {
+    if row.is_empty() {
+        return Ok(Some(()));
+    }
+    let Some(RowPlacement {
+        metrics: mut row_metrics,
+        mut x,
+        y,
+        carved,
+        available_width,
+        next_top,
+    }) = place_row_with_storage(
+        plan, row, horizontal, exclusions, style, dpi, ending, storage,
+    )?
+    else {
+        return Ok(None);
+    };
+    let height = row_metrics.baseline + row_metrics.descent;
+    let baseline = row_metrics.baseline;
+    plan.carved |= carved;
+    // 같은 확정 줄의 분배 전진을 측정 결과와 실제 글자 원점에 함께 보존한다.
+    let gaps = alignment::gaps_with_storage(
+        row,
+        ending,
+        style.alignment,
+        available_width - row_metrics.width,
+        storage,
+    )?;
+    row_metrics.width += gaps.iter().sum::<f64>();
     let first_box = plan.boxes.len();
     let row_x = x;
     for (index, mut item) in row.drain(..).enumerate() {
@@ -799,19 +1004,7 @@ fn finish_row_with_storage<S: crate::storage::Storage>(
             baseline,
         },
     )?;
-    let metrics = super::composer::frame_metrics_for_line(
-        row_font_size,
-        plan.fallback_font_size,
-        style.line_spacing_type,
-        style.line_spacing,
-        dpi,
-    );
-    let gap = hwpunit_to_px(metrics.line_spacing, dpi);
-    // 표도 Percent의 부호 있는 간격을 소비한다. 표의 실제 점유 높이는
-    // rows에 보존하므로 다음 줄 원점을 물리 하단으로 clamp하지 않는다.
-    let signed_gap =
-        !has_table || style.line_spacing_type == crate::model::style::LineSpacingType::Percent;
-    plan.next_row_top = y + height + if signed_gap { gap } else { gap.max(0.0) };
+    plan.next_row_top = next_top;
     plan.end = plan.end.max(y + height);
     Ok(Some(()))
 }
@@ -962,6 +1155,7 @@ pub(crate) fn plan_plain_text_with_storage<S: crate::storage::Storage>(
     Ok(Some(InlineFlowPlan {
         stored_empty_host: false,
         stored_float_host: false,
+        table_frames: Vec::new(),
         start: placement.paragraph_y,
         end,
         boxes: Vec::new(),
@@ -1143,6 +1337,7 @@ pub(crate) fn plan_square_table_host(
     Some(InlineFlowPlan {
         stored_empty_host: false,
         stored_float_host: false,
+        table_frames: Vec::new(),
         text_rows: Some(rows),
         square_host_control: Some(control),
         text_spacing_before: Some(spacing_before),

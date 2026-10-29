@@ -1962,7 +1962,9 @@ impl PaginationSourceContext {
         let hwp3_converted_missing_lineseg =
             profile.hwp3_layout() && !profile.hwp3_native_layout() && !profile.hwpx_container();
         Self {
-            source_uses_inline_field_reset: profile.hwpx_stored_layout()
+            // Keep HWPX container inference separate from conversion lineage.
+            source_uses_inline_field_reset: (profile.hwpx_stored_layout()
+                && profile.hwpx_container())
                 || hwp3_converted_missing_lineseg,
             hwp3_converted_missing_lineseg,
             stored_geometry_policy: profile.stored_geometry_policy(),

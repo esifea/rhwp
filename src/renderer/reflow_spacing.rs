@@ -10,6 +10,7 @@ pub(crate) fn plain_text_spacing(
     para: &Paragraph,
     style: Option<&ResolvedParaStyle>,
     start_line: usize,
+    is_final_fragment: bool,
 ) -> Option<ParagraphVerticalSpacing> {
     if !para.controls.is_empty() || !crate::renderer::para_has_no_stored_line_segs(para) {
         return None;
@@ -20,7 +21,11 @@ pub(crate) fn plain_text_spacing(
         } else {
             0.0
         },
-        after: style.map_or(0.0, |s| s.spacing_after),
+        after: if is_final_fragment {
+            style.map_or(0.0, |s| s.spacing_after)
+        } else {
+            0.0
+        },
     })
 }
 

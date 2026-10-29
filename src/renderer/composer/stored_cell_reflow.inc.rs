@@ -683,7 +683,10 @@ pub(crate) fn recompose_cell_lines_in_frame_with_storage<S: crate::storage::Stor
         // 개체 흐름을 분리한 정규화가 이미 같은 줄의 높이·간격을 발행했다.
         // 일반 합성 단일 줄처럼 캐시를 지우고 채우면 그림 뒤에 글자 줄간격을
         // 다시 더해 측정·조각 상자가 부푼다. 원본 저장 줄로 승격하지 않고 그대로 소비한다.
-        if para.layout_object_projection && !para.stored_text_partition_is_dirty() {
+        if para.layout_object_projection
+            && !para.stored_text_partition_is_dirty()
+            && !para.generated_cell_lines_invalidated
+        {
             return Ok(());
         }
         let has_synthetic_line_segs = !para.line_segs.is_empty()
@@ -695,6 +698,7 @@ pub(crate) fn recompose_cell_lines_in_frame_with_storage<S: crate::storage::Stor
         if para.line_segs.len() >= 2
             && has_synthetic_line_segs
             && !para.stored_text_partition_is_dirty()
+            && !para.generated_cell_lines_invalidated
         {
             // HWPX 로드 단계에서 셀 폭/높이/anchor 속성으로 합성한 lineSeg 경계는
             // 이미 문서 속성 기반 보정 결과다. 여기서 다시 폭 기준으로 합치고

@@ -47,7 +47,8 @@ pub(in crate::renderer::typeset) fn format_paragraph_for_flow_with_storage<
     // Reflow has no saved vertical ladder which could restore omitted spacing.
     // Reserve the same paragraph before-space consumed by the composed paint
     // path; otherwise the next object's shared origin rewinds into prior text.
-    let flow_spacing = crate::renderer::reflow_spacing::plain_text_spacing(para, para_style, 0);
+    let flow_spacing =
+        crate::renderer::reflow_spacing::plain_text_spacing(para, para_style, 0, true);
     let spacing_before = flow_spacing
         .map(|s| s.before)
         .unwrap_or_else(|| para_style.map_or(0.0, |s| s.spacing_before));
@@ -118,9 +119,16 @@ pub(in crate::renderer::typeset) fn format_paragraph_for_flow_with_storage<
         // [#7824] 저장 사다리의 줄 범위는 한/글이 계산한 원본 줄일 때만 상한이 된다.
         // 합성 사다리는 문단 위 간격을 포함하지 않으므로 적합성 상한으로 쓰지 않는다.
         // 문단 아래 간격은 위 metric에서 이미 한 번 제외했다.
-        let authored_line_segs = para.line_segs.iter().all(|seg| {
-            seg.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
-        });
+        let authored_line_segs = !para.stored_text_partition_is_dirty()
+            && !para.cell_format_vpos_dirty
+            && para.serializable_line_segs().len() == para.line_segs.len()
+            && para
+                .source_line_seg_vertical_pos
+                .as_ref()
+                .is_none_or(|source| source.len() == para.line_segs.len())
+            && para.line_segs.iter().all(|seg| {
+                seg.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
+            });
         let vpos_metric = if recomposed.is_none()
             && para.controls.is_empty()
             && authored_line_segs

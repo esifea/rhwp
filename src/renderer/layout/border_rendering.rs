@@ -19,7 +19,7 @@ pub(crate) struct TableGridTooLarge {
 }
 
 impl TableGridTooLarge {
-    fn check(row_count: usize, col_count: usize) -> Result<(), Self> {
+    pub(super) fn check(row_count: usize, col_count: usize) -> Result<(), Self> {
         if row_count.saturating_mul(col_count) > MAX_TABLE_GRID_CELLS {
             Err(Self {
                 row_count,

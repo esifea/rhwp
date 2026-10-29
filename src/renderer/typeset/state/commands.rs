@@ -321,6 +321,13 @@ impl TypesetState {
         }
         Ok(())
     }
+    /// Transfers the consumed unit without publishing it on its host page.
+    pub(in crate::renderer::typeset) fn defer_generated_atomic_table(
+        &mut self,
+        table: crate::renderer::typeset::PendingGeneratedAtomicTable,
+    ) {
+        self.data.pending_generated_atomic_tables.push(table);
+    }
     pub(in crate::renderer::typeset) fn mark_pre_emitted_host(&mut self, index: usize) {
         self.data.pre_emitted_host_paras.insert(index);
     }

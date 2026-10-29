@@ -181,13 +181,12 @@ fn try_compose_lines<S: crate::storage::Storage>(
             storage.push(
                 &mut lines,
                 ComposedLine {
-                    runs: try_split_by_char_shapes(
+                    runs: split_row_runs(
                         content,
                         text_start,
                         text_end.saturating_sub(usize::from(has_break)),
                         &para.char_offsets,
                         &para.char_shapes,
-                        storage,
                     )?,
                     line_height: line_seg.line_height,
                     baseline_distance: line_seg.baseline_distance,

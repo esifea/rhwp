@@ -505,6 +505,8 @@ impl Default for ResolvedBorderStyle {
 /// 해소된 스타일 세트 (DocInfo에서 변환)
 #[derive(Debug, Default, Clone)]
 pub struct ResolvedStyleSet {
+    /// Canonical session key of generated line partitions, including all mappings.
+    pub(crate) generated_line_environment: Option<std::sync::Arc<str>>,
     /// 문서 지정 대체가 있어도 현재 선택은 자기 메트릭을 가진 원본 TTF인 슬롯.
     /// 값은 문서가 선언한 대체 프로그램의 해소 결과다. 저장 줄 전체가 이 대체
     /// 프로그램의 채움과 일치하고 현재 원본 프로그램과 다른 경우에만 사용한다.
@@ -608,6 +610,6 @@ crate::storage::clone_fields!(ResolvedParaStyle, {alignment, vertical_alignment,
 
 crate::storage::clone_fields!(ResolvedBorderStyle, {borders, fill_color, pattern, gradient, image_fill, diagonal_attr, diagonal, center_line});
 
-crate::storage::clone_fields!(ResolvedStyleSet, {source_program_projection_slots, native_pua_fonts, char_overlap_size_bounds, source_char_shapes, resolved_dpi, isolated_jamo_font, page_number_char_style_id, page_number_font_is_hft, supplemental_metrics, char_styles, para_styles, border_styles, numberings, bullets, hwp3_variant, hft_ascii_halfwidth, kerning_measurement_context, horizontal_shaping_context});
+crate::storage::clone_fields!(ResolvedStyleSet, {generated_line_environment, source_program_projection_slots, native_pua_fonts, char_overlap_size_bounds, source_char_shapes, resolved_dpi, isolated_jamo_font, page_number_char_style_id, page_number_font_is_hft, supplemental_metrics, char_styles, para_styles, border_styles, numberings, bullets, hwp3_variant, hft_ascii_halfwidth, kerning_measurement_context, horizontal_shaping_context});
 
 crate::storage::clone_fields!(ResolvedImageFill, {bin_data_id, fill_mode, brightness, contrast, effect});

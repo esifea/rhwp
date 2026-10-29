@@ -166,6 +166,12 @@ pub struct Paragraph {
     /// template until fresh rows are published.
     #[serde(skip_serializing)]
     pub stored_text_partition_dirty: bool,
+    /// Recomposes generated cell rows after a session font-environment change.
+    #[serde(skip_serializing)]
+    pub generated_cell_lines_invalidated: bool,
+    /// Shares the full canonical environment key that published generated rows.
+    #[serde(skip_serializing)]
+    pub generated_cell_lines_environment: Option<std::sync::Arc<str>>,
     /// Pending cell-format vpos update. Travels with the paragraph during batch edits;
     /// never serialized, and flushed before saving an undo snapshot.
     #[serde(skip_serializing)]
@@ -936,6 +942,8 @@ impl Paragraph {
         // 읽은 줄에만 붙던 보정폭을 그대로 두면 다음 투영에서 이중으로 더해진다.
         self.hwpx_axis_shift = 0;
         self.stored_text_partition_dirty = false;
+        self.generated_cell_lines_invalidated = false;
+        self.generated_cell_lines_environment = None;
     }
 
     /// 같은 줄 구성 결과에서 생성한 경계와 공백 규칙을 함께 발행한다.
@@ -2166,6 +2174,8 @@ impl Paragraph {
             markpen_marks: new_markpen_marks,
             numbering_restart: None,
             stored_text_partition_dirty: false,
+            generated_cell_lines_invalidated: false,
+            generated_cell_lines_environment: None,
             cell_format_vpos_dirty: self.cell_format_vpos_dirty,
             cell_vpos_reset: Some(false),
             // 번호는 문서 순서로 다시 계산해야 하는 파생값이다 (#7436).

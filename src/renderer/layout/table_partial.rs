@@ -1097,6 +1097,7 @@ impl LayoutEngine {
         // [#6976] 접기 대상 행(모델 행 인덱스)과 그 행이 남긴 여분의 최솟값 수집기.
         fold_last_row: Option<usize>,
         fold_slack: &mut f64,
+        fold_trailing_spacing: &mut f64,
     ) {
         let parent_owned = external_frame.is_none_or(|frame| frame.parent_owned);
         for (cell_idx, cell) in table.cells.iter().enumerate() {
@@ -5593,6 +5594,32 @@ impl LayoutEngine {
                 if row_band::owns_fragment_bottom(cell_row, cell.row_span as usize, fold_row)
                     && !is_repeated_header_cell
                 {
+                    // Only a continuing cell's own source line can authorize a fold.
+                    // Generated rows retain their full advance; completed siblings
+                    // do not transfer spacing to the continuing cell's frame.
+                    if let Some((su, eu)) = cut_units {
+                        let units = self.cell_units(cell, table, styles);
+                        let eu = eu.min(units.len());
+                        if su < eu && eu < units.len() {
+                            let ranges =
+                                self.cell_line_ranges_from_cut(cell, table, styles, su, eu);
+                            let spacing = ranges
+                                .iter()
+                                .enumerate()
+                                .rfind(|(_, &(start, end))| start < end)
+                                .and_then(|(pi, &(_, end))| {
+                                    cell.paragraphs.get(pi)?.line_segs.get(end - 1)
+                                })
+                                .filter(|seg| {
+                                    seg.tag
+                                        & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY
+                                        == 0
+                                })
+                                .map(|seg| hwpunit_to_px(seg.line_spacing.max(0), self.dpi))
+                                .unwrap_or(0.0);
+                            *fold_trailing_spacing = fold_trailing_spacing.min(spacing);
+                        }
+                    }
                     // 배치 커서(`para_y`)는 줄 상자 바닥과 다를 수 있다 — 상자 **안에 있던**
                     // 가시 자손의 바닥도 함께 본다. 상자 밖으로 나간 자손은 이 조각이 이미
                     // 잘라 낸 것이므로 세지 않는다(세면 접기가 영영 멈춘다).
@@ -6829,7 +6856,19 @@ impl LayoutEngine {
             && end_cut.is_empty()
             && start_cut.iter().any(|&cut| cut > 0)
             && !self.profile.get().session_edited()
-            && self.profile.get().hwpx_stored_layout()
+            && (self.profile.get().hwpx_stored_layout()
+                || self.profile.get().hwp5_stored_pagination_layout())
+            && !self
+                .render_normalization
+                .borrow()
+                .table_text_reflowed(table)
+            && !table.cells.iter().any(|cell| {
+                cell.paragraphs.iter().any(|para| {
+                    para.controls
+                        .iter()
+                        .any(|control| matches!(control, Control::Footnote(_)))
+                })
+            })
             && paragraphs
                 .get(para_index + 1)
                 .and_then(|next| {
@@ -7431,6 +7470,7 @@ impl LayoutEngine {
                 table,
             )
         };
+        let mut fold_trailing_spacing = f64::INFINITY;
         self.layout_partial_table_cells(
             tree,
             &mut table_node,
@@ -7480,6 +7520,7 @@ impl LayoutEngine {
             original_restart_alignment_rows,
             fold_last_row,
             &mut fold_slack,
+            &mut fold_trailing_spacing,
         );
 
         // [#6976] 접기 적용 — 자르는 양은 두 상한의 작은 쪽이다.
@@ -7492,33 +7533,11 @@ impl LayoutEngine {
         // ①만 빼면 `table_giant_cell_overfill` 처럼 행 높이에 줄간격의 **일부만** 들어 있는
         // 조각에서 상자가 내용 아래로 내려간다. ②만 빼면 내용이 적은 선언 높이 행이 무너진다.
         if let Some(fold_row) = fold_last_row {
-            let mut trail: f64 = 0.0;
-            let (su, eu) = (
-                start_cut.first().copied().unwrap_or(0),
-                end_cut.first().copied().unwrap_or(0),
-            );
-            if eu > 0 {
-                for cell in table.cells.iter().filter(|c| c.row as usize == fold_row) {
-                    let ranges = self.cell_line_ranges_from_cut(cell, table, styles, su, eu);
-                    let Some(pi2) = ranges
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, &(a, b))| b > a)
-                        .map(|(i, _)| i)
-                        .next_back()
-                    else {
-                        continue;
-                    };
-                    let end = ranges[pi2].1;
-                    if let Some(seg) = cell
-                        .paragraphs
-                        .get(pi2)
-                        .and_then(|p| p.line_segs.get(end.checked_sub(1).unwrap_or(0)))
-                    {
-                        trail = trail.max(hwpunit_to_px(seg.line_spacing.max(0), self.dpi));
-                    }
-                }
-            }
+            let trail = if fold_trailing_spacing.is_finite() {
+                fold_trailing_spacing
+            } else {
+                0.0
+            };
             // [#7095 확장] 쪽 상한 초과분. 정본은 `본문아래 − outMargin.bottom − 100HU` 에서
             // 조각 상자를 끊는다 — 그 형상 조건은 1×1 이 아니다. 정본 세 문서 10조각에서
             // 확인했다(양쪽 모두 괘선 병합으로 잰 값, 잔차 0.09~1.25px).

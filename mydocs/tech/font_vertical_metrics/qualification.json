@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "historicalWidthSha256": "b093ca08bd7200bed211569df90e1e964ce090a2a9522bc29e1bbb3fa9d5c3cb",
+  "records": [
+    {
+      "entryIndex": 2,
+      "entryId": "font-metric.afe9fdb40f52526f9c46",
+      "name": "HCR Dotum",
+      "acceptedNames": [
+        "HCR Dotum",
+        "함초롬돋움"
+      ],
+      "kind": "full-font-hhea",
+      "inputs": [
+        {
+          "path": "HANDotum.ttf",
+          "sha256": "0dfe708556a36379ed1aaa37d4a9ec62b860939e84dd3ccdbeb0c0ad5314cd14",
+          "faceIndex": 0
+        }
+      ],
+      "expected": [
+        1000,
+        1070,
+        -230,
+        0
+      ]
+    },
+    {
+      "entryIndex": 276,
+      "entryId": "font-metric.2b7a4214d610ebc0d2e9",
+      "name": "HYSinMyeongJo-Medium",
+      "acceptedNames": [
+        "HYSinMyeongJo-Medium",
+        "HY신명조"
+      ],
+      "kind": "cross-document-pdf-global-hhea",
+      "inputs": [
+        {
+          "path": "samples/task1749/saved_bounds_cumulative_page_break-2024.pdf",
+          "sha256": "68c09b6df2aa5f6c89272193c69013a7a7417e0f587e5bb473274e50ef0e7e70",
+          "programSha256": "4797aeaca170b35ac5adca6e2955b812ad45c7f6c53d7cbc3c8633757f65db18",
+          "firstPage": 2,
+          "baseFont": "/INPILL+H2mjsM"
+        },
+        {
+          "path": "pdf/18179365_high_voltage_collision-2020.pdf",
+          "sha256": "179353f2e83e35e913571796d3ef4033c9662d229c70b0f0b0bc8257c67b88b7",
+          "programSha256": "58e39dec8e57b8a921d2d8263cfa30b84835c46b410555391e047f0d279da98b",
+          "firstPage": 1,
+          "baseFont": "/INPILL+H2mjsM"
+        },
+        {
+          "path": "pdf/german-legislative-system-review-2020.pdf",
+          "sha256": "8a8542c9cc765c7673e8ca78ab178b34ce3d6f934ebb188db9d3872019b6e4f4",
+          "programSha256": "cdd3fa069403ff187bf35adda0cfc3ee2de79b555650f1d2b3e598d7b2c267a9",
+          "firstPage": 4,
+          "baseFont": "/INPILL+H2mjsM"
+        },
+        {
+          "path": "samples/issue1891/86712_regulatory_analysis-2024.pdf",
+          "sha256": "b612638c849d967cf3005d0a7c82df18f47ac66f3b2777632ffe0912135b4a81",
+          "programSha256": "e82f11df91ab72a9466d8df84225fed2873bde1b3c854431345e742b1c5f313e",
+          "firstPage": 24,
+          "baseFont": "/INPILL+H2mjsM"
+        }
+      ],
+      "expected": [
+        1024,
+        879,
+        -145,
+        152
+      ]
+    }
+  ]
+}

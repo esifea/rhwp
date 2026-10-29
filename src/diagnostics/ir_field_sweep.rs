@@ -660,6 +660,8 @@ fn sweep_paragraph(base: &str, a: &Paragraph, b: &Paragraph, out: &mut Divergenc
         numbering_restart,
         // 저장 LineSeg의 편집 후 provenance — 내용 비교는 line_segs가 담당한다.
         stored_text_partition_dirty: _,
+        generated_cell_lines_invalidated: _,
+        generated_cell_lines_environment: _,
         // [#4677] 조판 전용 보강 줄 표식 — 파일에 실리지 않으므로 IR 비교 대상 아님.
         layout_only_fill_lines: _,
         cell_format_vpos_dirty: _,

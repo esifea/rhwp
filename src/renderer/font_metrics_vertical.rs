@@ -1,6 +1,6 @@
 //! 확인된 원본 프로그램의 수직 줄 프레임. 표시 대체 face의 잉크 상자와 구분한다.
 
-use super::{find_metric_decision, MetricMatchKind};
+use super::{find_metric_decision, qualified_vertical_metric, MetricMatchKind};
 
 struct VerticalMetric {
     name: &'static str,
@@ -23,13 +23,17 @@ const VERTICAL_METRICS: &[VerticalMetric] = &[VerticalMetric {
     win_descent: 230,
 }];
 
+/// Returns qualified descent, preferring the existing Win frame to source hhea.
 pub(crate) fn win_descent_em(name: &str, bold: bool, italic: bool) -> Option<f64> {
     let decision = find_metric_decision(name, bold, italic)?;
     if decision.match_kind != MetricMatchKind::Exact {
         return None;
     }
-    let metric = VERTICAL_METRICS.iter().find(|entry| {
+    if let Some(metric) = VERTICAL_METRICS.iter().find(|entry| {
         entry.name == decision.metric.name && entry.bold == bold && entry.italic == italic
-    })?;
-    Some(f64::from(metric.win_descent) / f64::from(metric.units_per_em))
+    }) {
+        return Some(f64::from(metric.win_descent) / f64::from(metric.units_per_em));
+    }
+    // Qualified source hhea supplies the descent only when no Win frame exists.
+    qualified_vertical_metric(name, bold, italic)?.clearance(1.0)
 }

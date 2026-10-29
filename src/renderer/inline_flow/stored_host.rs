@@ -92,6 +92,7 @@ pub(crate) fn plan_stored_empty_square_host(
         + hwpunit_to_px(row.line_height.saturating_add(row.line_spacing), dpi)
         + style.spacing_after;
     Some(InlineFlowPlan {
+        table_frames: Vec::new(),
         stored_empty_host: true,
         stored_float_host: false,
         text_rows: Some(vec![row]),
@@ -229,6 +230,7 @@ pub(crate) fn plan_stored_body_wide_host(
         )
         + after;
     Some(InlineFlowPlan {
+        table_frames: Vec::new(),
         stored_empty_host: false,
         stored_float_host: true,
         text_rows: Some(rows),

@@ -751,6 +751,9 @@ fn between_marker_geometry(core: &DocumentCore, source: &Document, marker: &str)
 fn generated_whitespace_host_grown_rowbreak_table_keeps_block_fragments() {
     let mut source = fixture([BODY_WIDTH; 2], [7200, 11400], ["", "", ""], 27000);
     let mut grown = table(0, BODY_WIDTH, 18 * 1300);
+    // Keep this block continuation independent of the helper's TAC ownership.
+    grown.common.treat_as_char = false;
+    grown.common.horz_rel_to = rhwp::model::shape::HorzRelTo::Column;
     grown.row_count = 18;
     grown.col_count = 2;
     grown.page_break = TablePageBreak::RowBreak;
@@ -1303,8 +1306,8 @@ fn cell_derived_atomic_width_includes_column_spacing_in_final_frame() {
             .expect("second frame")
             .1;
         assert!(
-            (first.3 - px(20300)).abs() < EPS,
-            "two10000 columns plus300 spacing: {first:?}"
+            (first.3 - px(20900)).abs() < EPS,
+            "10000HU 두 열과 내부 1개·외곽 2개의 300HU 간격: {first:?}"
         );
         ordered([first, second]);
         assert!(

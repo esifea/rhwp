@@ -11,6 +11,7 @@ use crate::error::HwpError;
 /// Global keys are exact document font names. Conflicting document declarations
 /// retain their language/font-record address. Targets are single faces, not CSS
 /// fallback chains. Mappings are applied once, not recursively.
+/// `fallbackFace` selects a final face only when the source font slot is absent.
 /// This declaration does not prove that the backend has the target font.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,6 +22,9 @@ pub struct FontEnvironment {
     /// 글꼴 설치·바이트 공급의 증명과 구분하며 명시적 환경에는 생략할 수 있다.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     selection_rules: BTreeMap<String, String>,
+    /// Selects a session face for an absent source slot without changing the IR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallback_face: Option<String>,
     /// 호출자가 실제 출력 프로그램을 확인한 TrueType 최종 face.
     /// 설치 증명은 아니며, 생략하면 기존 HFT 호환 메트릭을 유지한다.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -384,6 +388,7 @@ impl FontEnvironment {
             ),
             substitutions,
             selection_rules,
+            fallback_face: None,
             true_type_faces: true_type_faces.into_iter().collect(),
             preserve_source_metrics: true,
             glyph_fallbacks: BTreeMap::new(),
@@ -531,6 +536,10 @@ impl FontEnvironment {
 
     pub(crate) fn validate(&self) -> Result<(), HwpError> {
         if !Self::valid_name(&self.id)
+            || self
+                .fallback_face
+                .as_deref()
+                .is_some_and(|face| !Self::valid_name(face))
             || self.true_type_faces.len() > 256
             || self
                 .true_type_faces
@@ -666,5 +675,9 @@ impl FontEnvironment {
 
     pub(crate) fn glyph_fallbacks(&self, face: &str) -> Option<&[String]> {
         self.glyph_fallbacks.get(face).map(Vec::as_slice)
+    }
+
+    pub(crate) fn fallback_face(&self) -> Option<&str> {
+        self.fallback_face.as_deref()
     }
 }

@@ -326,6 +326,44 @@ struct DeferredStoredFrameControl {
 }
 crate::storage::clone_fields!(DeferredStoredFrameControl, {kind, para_index, control_index, placement, following_body_para_index});
 
+/// Retains a consumed whole-table unit until its recorded physical page opens.
+struct PendingGeneratedAtomicTable {
+    owner: crate::renderer::float_placement::GeneratedAtomicTablePage,
+    placement: crate::renderer::float_placement::ParagraphFloatPlacement,
+}
+
+/// Owns the destination page until flushing transfers the table to pagination.
+struct MaterializedGeneratedAtomicTable {
+    pending: PendingGeneratedAtomicTable,
+}
+
+impl PendingGeneratedAtomicTable {
+    fn materialize(self, page: usize) -> MaterializedGeneratedAtomicTable {
+        debug_assert_eq!(self.owner.destination_page, page);
+        MaterializedGeneratedAtomicTable { pending: self }
+    }
+}
+
+impl MaterializedGeneratedAtomicTable {
+    /// Finishes ownership by moving the sole paint item and its resolved plan.
+    fn finish(
+        self,
+    ) -> (
+        crate::renderer::float_placement::GeneratedAtomicTablePage,
+        PageItem,
+        crate::renderer::float_placement::ParagraphFloatPlacement,
+    ) {
+        (
+            self.pending.owner,
+            PageItem::Table {
+                para_index: self.pending.owner.para_index,
+                control_index: self.pending.owner.control_index,
+            },
+            self.pending.placement,
+        )
+    }
+}
+
 /// 호스트 문단의 spacing (표 전/후)
 #[derive(Debug, Clone, Copy)]
 struct HostSpacing {

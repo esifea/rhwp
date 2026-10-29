@@ -29,6 +29,7 @@ pub(super) mod deferred_picture;
 pub(super) mod deferred_placement;
 pub(super) mod empty_float;
 pub(super) mod flow_table;
+pub(super) mod generated_atomic;
 pub(super) mod host_wrap;
 pub(super) mod mixed_host_line;
 pub(super) mod order;

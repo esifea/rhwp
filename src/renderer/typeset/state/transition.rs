@@ -84,6 +84,9 @@ impl TypesetState {
                 deferred_next_column_stored_frames: Vec::new(),
                 deferred_source_frame_body_pages: std::collections::HashMap::new(),
                 page_start_stored_frames: Vec::new(),
+                pending_generated_atomic_tables: Vec::new(),
+                materialized_generated_atomic_tables: Vec::new(),
+                generated_atomic_page_exclusion: None,
                 fragment_queued_table_footnotes: std::collections::HashSet::new(),
                 reset_vpos_after_queued_table_footnote_page: false,
                 prefilled_paras: std::collections::HashSet::new(),
@@ -477,6 +480,7 @@ impl TypesetState {
             || !self.data.current_column_wrap_around_paras.is_empty()
             || !self.data.page_start_square_pictures.is_empty()
             || !self.data.page_start_stored_frames.is_empty()
+            || !self.data.materialized_generated_atomic_tables.is_empty()
     }
 
     /// 현재 항목을 ColumnContent로 만들어 마지막 페이지에 push
@@ -578,6 +582,15 @@ impl TypesetState {
                     control_index: deferred.control_index,
                 }),
         )?;
+        for materialized in std::mem::take(&mut self.data.materialized_generated_atomic_tables) {
+            let (owner, item, placement) = materialized.finish();
+            storage.insert_map(
+                &mut self.data.paragraph_float_placements,
+                (owner.para_index, owner.control_index),
+                placement,
+            )?;
+            storage.push(&mut items, item)?;
+        }
         storage.extend(
             &mut items,
             std::mem::take(&mut self.data.page_start_stored_frames)
@@ -847,6 +860,21 @@ impl TypesetState {
         Ok(())
     }
 
+    /// Drains pending owners at section tail, retaining table-only pages.
+    pub(in crate::renderer::typeset) fn drain_generated_atomic_tables_with_storage<
+        S: crate::storage::Storage,
+    >(
+        &mut self,
+        storage: &S,
+    ) -> Result<(), S::Error> {
+        while !self.data.pending_generated_atomic_tables.is_empty() {
+            self.flush_column_with_storage(storage)?;
+            self.push_page_with_generated_owners_with_storage(storage)?;
+        }
+        self.flush_column_with_storage(storage)?;
+        Ok(())
+    }
+
     /// 페이지 보장
     pub(in crate::renderer::typeset) fn ensure_page(&mut self) {
         match self.ensure_page_with_storage(&crate::storage::Unbounded) {
@@ -878,6 +906,19 @@ impl TypesetState {
         &mut self,
         storage: &S,
     ) -> Result<(), S::Error> {
+        self.push_page_with_generated_owners_with_storage(storage)?;
+        while self.data.generated_atomic_page_exclusion.is_some() {
+            self.flush_column_with_storage(storage)?;
+            self.push_page_with_generated_owners_with_storage(storage)?;
+        }
+        Ok(())
+    }
+
+    /// Opens an object destination before ordinary body admission resumes.
+    fn push_page_with_generated_owners_with_storage<S: crate::storage::Storage>(
+        &mut self,
+        storage: &S,
+    ) -> Result<(), S::Error> {
         self.finish_next_column_stored_frames_with_storage(storage)?;
         if !self.data.deferred_column_shapes.is_empty() {
             self.finish_deferred_column_shapes_with_storage(storage)?;
@@ -890,6 +931,21 @@ impl TypesetState {
         // 합성 어울림 배제 사각형은 쪽 단위 — 새 쪽에서 비운다.
         self.data.wrap_synth_rects.clear();
         self.reset_for_new_page();
+        self.data.generated_atomic_page_exclusion = None;
+        let page = self.data.pages.len() - 1;
+        let mut pending = std::mem::take(&mut self.data.pending_generated_atomic_tables);
+        for table in pending.drain(..) {
+            if table.owner.destination_page == page {
+                debug_assert!(self.data.generated_atomic_page_exclusion.is_none());
+                self.data.generated_atomic_page_exclusion = Some(table.owner);
+                storage.push(
+                    &mut self.data.materialized_generated_atomic_tables,
+                    table.materialize(page),
+                )?;
+            } else {
+                storage.push(&mut self.data.pending_generated_atomic_tables, table)?;
+            }
+        }
         // [#3738 Stage 22] current page의 본문/각주 흐름을 먼저 확정한 뒤, tail
         // Square picture만 새 physical page의 layout item 앞에 둔다. 즉시
         // `current_items`에 넣지 않아 다음 paragraph의 height/vpos fit은 기존과
