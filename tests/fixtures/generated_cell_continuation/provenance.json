@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-28",
+  "inputs": {
+    "long-cell.hwp": "11aa83711a4fb4a359e98c53726c20943b5911f2e203447635138cf81a623ae3",
+    "long-cell-hwp.pdf": "bd445d0c0b5916d6094201440109a85dbca0861fedec0fdb9845c27d8b874b56",
+    "long-cell.hwpx": "0556fe010563084e904989e132dcdc8e040188bd2e761c7a262a48d855a98594",
+    "long-cell-hwpx.pdf": "7a40989f53410a3afb9db8bcdec7690068979baba6f9e82537264a010819061a",
+    "environment.json": "e59554ba140380fad75ea0cab85b3828b11a39a6c5d341c48bd1ee2333f4e7af"
+  },
+  "source_metadata": {
+    "origin": "합성 문서 생성 후 원본 바이트 보존",
+    "page_break": "CELL (numeric 2)",
+    "source_font_faces": "모든 언어 슬롯 비어 있음. caller fallback은 원문 선언이 아님.",
+    "hwp_line_segs": "오른쪽 긴 셀 문단에 저장 LineSeg 없음",
+    "font_environment": "environment.json은 호출자 선언이며 문서 메타데이터가 아님",
+    "font_binary_bundled": false
+  },
+  "independent_reference": {
+    "origin": "사용자가 동일 입력을 Hancom Docs 웹에서 인쇄하여 제공한 PDF",
+    "producer": "cairo 1.15.12",
+    "application_version": "미제공",
+    "page_count": 7,
+    "segments_per_page": [
+      32,
+      32,
+      32,
+      32,
+      32,
+      32,
+      8
+    ],
+    "label_page": 1,
+    "following_body_marker_page": 7,
+    "source_artifacts": {
+      "long-cell-hwp.pdf": "hancom-instracell-results/long-cell-split-hwp.pdf",
+      "long-cell-hwpx.pdf": "hancom-instracell-results/long-cell-split-hwpx.pdf"
+    }
+  },
+  "visual_prerequisite": {
+    "Native": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      97.18987
+    ],
+    "fresh_WASM": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      97.18987
+    ],
+    "threshold": 90,
+    "same_inputs_and_references": true,
+    "native_sha256_prefix": "e00b227e",
+    "fresh_wasm_sha256_prefix": "bd139f4b"
+  },
+  "metric_reference": {
+    "face": "HCR Dotum",
+    "font_sha256": "0dfe708556a36379ed1aaa37d4a9ec62b860939e84dd3ccdbeb0c0ad5314cd14",
+    "units_per_em": 1000,
+    "advance_s": 513,
+    "advance_e": 567,
+    "advance_m": 919,
+    "advance_digit": 550,
+    "advance_space": 300,
+    "origin": "공개 한컴 HANDotum.ttf의 hmtx; 770개 라틴 폭과 내장 메트릭 표 일치 확인"
+  },
+  "source_artifacts": {
+    "long-cell.hwp": "hancom-intracell-2026-10-28/long-cell-split-hwp.hwp",
+    "long-cell.hwpx": "hancom-intracell-2026-10-28/long-cell-split-hwpx.hwpx"
+  },
+  "scalar_metric_contract": {
+    "variation": "동일 원문에서 char_shape.use_font_space만 false/true로 바꿈",
+    "expected_false_hwpunit": 500,
+    "expected_true_hwpunit": 300,
+    "basis": "HANDotum.ttf hmtx 공백300/1000em 및 기존 use_font_space 반각 계약",
+    "new_page_position_or_visual_oracle": false
+  },
+  "final_source_visual_verification": {
+    "evidence": "final-combined-visual-verification.json",
+    "native_sha256": "0de09d43469c1118653f982827d46d8bb5762b978ef279b2cb4124a80b040081",
+    "fresh_wasm_sha256": "38f9ad58e2d315c8b9e61e0ccc9d6a1ca22f4a2db759f18a07eb18777c32d922",
+    "all_22_pages_per_engine_at_least_90": true,
+    "all_22_rasters_per_engine_identical_to_previous_passing_candidate": true,
+    "inputs_or_assertions_changed": false
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "returned-hancom-hcrbatang-truetype",
+  "substitutions": {
+    "한양신명조": "함초롬바탕"
+  },
+  "trueTypeFaces": [
+    "함초롬바탕"
+  ]
+}

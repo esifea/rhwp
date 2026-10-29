@@ -1,0 +1,8 @@
+{
+  "id": "hancom-intracell-hcr-dotum",
+  "substitutions": {},
+  "fallbackFace": "HCR Dotum",
+  "trueTypeFaces": [
+    "HCR Dotum"
+  ]
+}

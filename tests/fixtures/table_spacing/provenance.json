@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-29",
+  "inputs": {
+    "table-spacing-cases.hwpx": "61770fd4936e20848540380d31de6feeba19585c82b1ca9b1a8b3f466d0b0a3e",
+    "table-spacing-cases.pdf": "01bc995d59fcc15db9b94ce0cbe73b7d88f1122816dae4c4e68661e239dc436a",
+    "environment.json": "e59554ba140380fad75ea0cab85b3828b11a39a6c5d341c48bd1ee2333f4e7af"
+  },
+  "source_metadata": {
+    "origin": "8개 합성 section을 변경 없이 한컴 Docs 웹에 전달한 원본",
+    "section_scenarios": [
+      "간격0 대조군",
+      "간격300·선언너비0",
+      "간격300·선언너비20000",
+      "간격300·선언너비20900",
+      "2행2열",
+      "둘째 행 두 열 병합",
+      "좌우 바깥여백150",
+      "높이가 다른 두 표를 같은 줄에 배치"
+    ],
+    "font_environment": "원문 글꼴 슬롯은 비어 있음. environment.json은 검증한 호출자 HCR Dotum fallback 선언",
+    "font_binary_bundled": false,
+    "original_bytes_modified": false
+  },
+  "independent_reference": {
+    "origin": "사용자가 같은 원본을 편집 없이 HancomDocsWeb에서 전쪽 인쇄하여 반환한 PDF",
+    "producer": "cairo 1.15.12",
+    "application_version": "미제공",
+    "warnings": "미제공",
+    "creation_utc": "2026-10-29T00:18:48Z",
+    "page_count": 8,
+    "page_section_correspondence": "원문 section 순서. 2~4쪽은 동일하게 보이므로 표시 내용만으로 상호 순열을 구분하지 못함",
+    "source_artifacts": {
+      "table-spacing-cases.hwpx": "hancom-boundary-validation-2026-10-28/table-spacing-cases.hwpx",
+      "table-spacing-cases.pdf": "hancom-boundary-results/table-spacing-cases.pdf"
+    }
+  },
+  "geometry_contract_hu": {
+    "column": 10000,
+    "row": 7200,
+    "spacing": 300,
+    "one_row_frame": [
+      20900,
+      7800
+    ],
+    "two_row_frame": [
+      20900,
+      15300
+    ],
+    "merged_second_row_width": 20300,
+    "outer_margin_each_side": 150,
+    "paragraph_line_spacing": 600
+  },
+  "visual_prerequisite": {
+    "Native": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ],
+    "fresh_WASM": [
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100,
+      100
+    ],
+    "threshold": 90,
+    "comparison_profile": "print",
+    "same_inputs_and_references": true,
+    "source_manifest_sha256": "2ec8e35e83cef6241c9f3937b5b08ba7956299e53934ab394a2b29f31684d9d3",
+    "native_sha256": "361e3355eb6facb12f69c3bbba21ef054b24651ceb5c92d1c148a0fc1711e3f7",
+    "fresh_js_sha256": "14076c6e700f1f36852b4e5a6cf8fb6d43766ff794a4f2f3b4db6e8c1443fffd",
+    "fresh_wasm_sha256": "5e4bc3764d8d0b45f657708f91e0590dca32ae2921b487954b7b07c862e1fb1b",
+    "evidence": "source07-sweeps/root-verification.json",
+    "source_audit": "reference-audit/report.md",
+    "direct_review": "root가 source07-reviews/native/table-spacing-cases/review/review_006.png와 review_008.png를 열어 병합행·같은 줄·뒤 본문을 판독",
+    "native_wrapper_hash_is_binary_hash": false
+  },
+  "coverage_limits": [
+    "F1 불일치 행, F3 저장 vpos, 중첩 진단 변형은 독립 PDF가 없어 정식 회귀에 포함하지 않음",
+    "양의 간격을 가진 분할·반복 머리행·rowspan·caption과 진짜 native 저장 줄 소유는 미검증",
+    "테두리 없는 원문이므로 실제 괘선 edge fidelity는 미검증",
+    "8-section 원문에 대응하는 native HWP/PDF가 없어 변환 후 재열기는 주장하지 않음"
+  ]
+}

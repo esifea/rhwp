@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-28",
+  "inputs": {
+    "edited.hwp": "0e09b6704e586c27938bb9a76eae74447371fbbd5298a0fb28ff4a4039ad35a1",
+    "edited.hwpx": "0b7754534a94dcf53c67c587797f40bf39a2e9c27155546d1da3b66081ad07f8",
+    "environment.json": "366f8afb641839a7b6babdc85f1e252c46d481f0b900271ed63f856ecb3f3739"
+  },
+  "source_artifacts": {
+    "edited.hwp": "hancom-followup-2026-10-28/flow-edited-hwp.hwp",
+    "edited.hwpx": "hancom-followup-2026-10-28/flow-edited-hwpx.hwpx",
+    "environment.json": "font-diagnosis/edited-hcr-environment.json"
+  },
+  "independent_hancom_pdfs": {
+    "hwp": {
+      "source": "hancom-followup-results/flow-edited-hwp.pdf",
+      "sha256": "71b4a9cad9d5ccfc8f4972df4567de9c31957441ded6f36c1d436ecaa6cbc8be"
+    },
+    "hwpx": {
+      "source": "hancom-followup-results/flow-edited-hwpx.pdf",
+      "sha256": "ac1653a37d78f07e0a8b489a1b21628ab6130e9371bf6aad910f635d41242698"
+    }
+  },
+  "validation": "docs-internal/hancom-followup-acceptance-2026-10-28/font-paint-v2-validation",
+  "all_pages": {
+    "Native": {
+      "HWP": [
+        90.75683,
+        99.01055
+      ],
+      "HWPX": [
+        90.75683,
+        99.01055
+      ]
+    },
+    "fresh_WASM": {
+      "HWP": [
+        90.75683,
+        99.01055
+      ],
+      "HWPX": [
+        90.75683,
+        99.01055
+      ]
+    }
+  },
+  "minimum_required": 90.0,
+  "new_generation_or_line_metadata_edit": false
+}
