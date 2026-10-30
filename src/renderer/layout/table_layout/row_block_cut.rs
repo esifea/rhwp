@@ -151,6 +151,32 @@ impl<'a> CellCutFrame<'a> {
                 )
                 .unwrap_or(0.0),
         );
+        let generated_line =
+            end.checked_sub(1)
+                .and_then(|index| self.units.get(index))
+                .is_some_and(|unit| {
+                    unit.reflowed_line_slot
+                        && unit.nested_row.is_none()
+                        && unit.nested_table_fragment.is_none()
+                        && !unit.mixed_nested_fragment
+                        && !unit.top_and_bottom_flow
+                        && unit.non_inline_control_range.is_none()
+                        && self.cell.paragraphs.get(unit.para_idx).is_some_and(|para| {
+                            super::plain_cell_flow::paragraph_has_plain_flow(para)
+                        })
+                });
+        if generated_line && end > self.start && end < self.units.len() {
+            let capacity_trim = self.engine.row_cut_capacity_trailing_trim(
+                self.table,
+                self.cell,
+                self.units,
+                self.start,
+                end,
+                self.styles,
+            );
+            return physical
+                .max(content_advance - capacity_trim + self.padding + self.header_height(end));
+        }
         if self.preserves_line_slots && end > self.start && end < self.units.len() {
             let following_advance = self.engine.stored_span_cut_closing_advance(
                 self.table,

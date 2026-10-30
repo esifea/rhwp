@@ -388,7 +388,8 @@ impl LayoutEngine {
         } else {
             0.0
         };
-        (stored.max(capacity), stored.max(occupied))
+        let reflow = self.reflow_cut_trailing_spacing(cell, table, units, end, styles);
+        (stored.max(capacity), stored.max(occupied).max(reflow))
     }
 
     /// 저장 줄이 증언한 컷의 수용량만 완화한다. 새 줄의 잉크 높이로 용량을 늘리지 않는다.

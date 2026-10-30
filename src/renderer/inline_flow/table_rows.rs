@@ -46,6 +46,16 @@ pub(crate) fn supports_table_text_rows_with_storage<S: crate::storage::Storage>(
     para: &Paragraph,
     storage: &S,
 ) -> Result<bool, S::Error> {
+    supports_table_text_rows_in_scope_with_storage(para, false, storage)
+}
+
+/// Checks the same control contract before a load fixup can discard host rows.
+/// `invalidate_stored_rows` applies only to caches that the caller may invalidate.
+pub(crate) fn supports_table_text_rows_in_scope_with_storage<S: crate::storage::Storage>(
+    para: &Paragraph,
+    invalidate_stored_rows: bool,
+    storage: &S,
+) -> Result<bool, S::Error> {
     // 현재 단에 들어가는 전체 물리 줄은 같은 계획으로 측정·배치한다.
     // 분할이 필요하면 호출자가 기존 행 분할 소유자에게 반환한다.
     // 이미 구성한 합성 개체 줄의 소유는 유지한다.
@@ -66,7 +76,8 @@ pub(crate) fn supports_table_text_rows_with_storage<S: crate::storage::Storage>(
         && para.controls.iter().enumerate().any(|(control, _)| {
             super::super::composer::owned_rowbreak_tac_height(para, control).is_some()
         });
-    Ok(super::super::para_has_no_stored_line_segs(para)
+    let no_stored_rows = invalidate_stored_rows || super::super::para_has_no_stored_line_segs(para);
+    Ok(no_stored_rows
         && !has_composed_object_row
         && !para.text.contains('\t')
         && para

@@ -1079,7 +1079,8 @@ where
 {
     // 첫 run의 secPr/colPr는 각각 실제 8유닛 슬롯이다. 원본에 없는 정의만
     // 템플릿이 추가하면 뒤 줄의 시작도 같은 폭만큼 전진해야 한다.
-    let injected_prefix_units = if ctx.line_segs_on_paragraph_axis
+    let injected_prefix_units = if (ctx.line_segs_on_paragraph_axis
+        || (ctx.inserted_template_slots_on_paragraph_axis && para.char_count > 0))
         && ctx.sub_list_depth == 0
         && ctx.body_coldef_template_pending
     {
@@ -1143,6 +1144,24 @@ where
         // 0 아님)만 날값을 둔다.
         if ctx.line_segs_on_hwpx_axis || para.hwpx_axis_shift != 0 {
             hwp5_only_slot_positions.clear();
+        } else if injected_prefix_units > 0 {
+            let positions = para
+                .control_utf16_positions_with_storage(storage)
+                .map_err(xml_error)?;
+            let section_index = para
+                .controls
+                .iter()
+                .position(|control| matches!(control, Control::SectionDef(_)));
+            let column_index = para
+                .controls
+                .iter()
+                .position(|control| matches!(control, Control::ColumnDef(_)));
+            hwp5_only_slot_positions.retain(|position| {
+                ![section_index, column_index]
+                    .into_iter()
+                    .flatten()
+                    .any(|index| positions.get(index) == Some(position))
+            });
         }
         // [#6871] 우리가 **접은** 슬롯은 출처와 무관하게 축에서 뺀다.
         //
@@ -1166,7 +1185,8 @@ where
         let hwp5_only_units = 8 * hwp5_only_slot_positions.len() as u32;
         let serializable_line_segs = para.serializable_line_segs();
         let rebased_line_segs: Option<Vec<LineSeg>> = if (!hwp5_only_slot_positions.is_empty()
-            || ctx.line_segs_on_paragraph_axis)
+            || ctx.line_segs_on_paragraph_axis
+            || injected_prefix_units > 0)
             && !serializable_line_segs.is_empty()
         {
             Some(

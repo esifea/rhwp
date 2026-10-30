@@ -560,6 +560,43 @@ pub fn is_tac_table_inline_in_para(table: &Table, seg_width: i32, para: &Paragra
     }
     let chars: Vec<char> = para.text.chars().collect();
     let control_positions = para.control_text_positions();
+    let owns_stored_row = crate::renderer::table_reflows_cell_content(table)
+        && !para.stored_text_partition_is_dirty()
+        && !para.cell_format_vpos_dirty
+        && para.line_segs.len() > 1
+        && para.char_offsets.len() == chars.len()
+        && para.controls.iter().enumerate().any(|(index, control)| {
+            if !matches!(control, Control::Table(candidate) if std::ptr::eq(candidate.as_ref(), table)) {
+                return false;
+            }
+            let Some(owner) = crate::renderer::composer::control_slot_line_index(para, index) else {
+                return false;
+            };
+            let line = &para.line_segs[owner];
+            let start = para.line_seg_text_start(owner);
+            let end = para.line_segs.get(owner + 1).map_or(para.char_count, |next| {
+                para.line_seg_text_start_of(next.text_start)
+            });
+            line.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
+                && line.line_height > 0
+                && i64::from(line.line_height)
+                    == i64::from(table.common.height)
+                        + i64::from(table.outer_margin_top)
+                        + i64::from(table.outer_margin_bottom)
+                && end > start
+                && para.controls.iter().enumerate().all(|(other_index, other)| {
+                    other_index == index
+                        || crate::renderer::composer::control_is_width_neutral_marker(other)
+                        || crate::renderer::composer::control_slot_line_index(para, other_index)
+                            .is_some_and(|other_owner| other_owner != owner)
+                })
+                && chars.iter().zip(&para.char_offsets).all(|(ch, offset)| {
+                    *offset < start || *offset >= end || *ch == '\u{fffc}'
+                })
+        });
+    if owns_stored_row {
+        return false;
+    }
     let has_middle_anchor = para
         .controls
         .iter()

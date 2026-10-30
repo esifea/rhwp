@@ -441,18 +441,20 @@ fn project_nodes(nodes: Vec<Node>, visibility: &Visibility) -> Result<Vec<Node>,
     Ok(output)
 }
 
+fn write_record(record: &Record, bytes: &mut Vec<u8>) {
+    let size = record.data.len() as u32;
+    bytes.extend(
+        (record.tag_id as u32 | (record.level as u32) << 10 | size.min(0xfff) << 20).to_le_bytes(),
+    );
+    if size >= 0xfff {
+        bytes.extend(size.to_le_bytes());
+    }
+    bytes.extend_from_slice(&record.data);
+}
+
 fn write_nodes(nodes: &[Node], bytes: &mut Vec<u8>) {
     for node in nodes {
-        let record = &node.record;
-        let size = record.data.len() as u32;
-        bytes.extend(
-            (record.tag_id as u32 | (record.level as u32) << 10 | size.min(0xfff) << 20)
-                .to_le_bytes(),
-        );
-        if size >= 0xfff {
-            bytes.extend(size.to_le_bytes());
-        }
-        bytes.extend_from_slice(&record.data);
+        write_record(&node.record, bytes);
         write_nodes(&node.children, bytes);
     }
 }
@@ -462,7 +464,13 @@ pub(crate) fn project(data: &[u8], info: &DocInfo) -> Result<Option<Vec<u8>>, Bo
     if !visibility.0.iter().flatten().any(|&(_, hidden)| hidden) {
         return Ok(None);
     }
-    let records = Record::read_all(data).map_err(|e| BodyTextError::RecordError(e.to_string()))?;
+    super::body_text::validate_memo_framing(data)?;
+    let mut records =
+        Record::read_all(data).map_err(|e| BodyTextError::RecordError(e.to_string()))?;
+    // Section tails own sibling lists, independent of visible body paragraphs.
+    // Preserve their counts and contents while projecting body change ranges.
+    let tail_start = super::body_text::section_tail_start(&records).unwrap_or(records.len());
+    let tail = records.split_off(tail_start);
     let uses_hidden_ranges = records
         .iter()
         .filter(|r| r.tag_id == tags::HWPTAG_PARA_RANGE_TAG)
@@ -478,5 +486,51 @@ pub(crate) fn project(data: &[u8], info: &DocInfo) -> Result<Option<Vec<u8>>, Bo
     let nodes = project_nodes(nodes, &visibility)?;
     let mut bytes = Vec::new();
     write_nodes(&nodes, &mut bytes);
+    for record in tail {
+        write_record(&record, &mut bytes);
+    }
+    Ok(Some(bytes))
+}
+
+/// Removes only authenticated hidden-owner lists from the visible copy.
+/// Requires one authenticated owner entry per native memo list.
+pub(crate) fn project_memo_lists(
+    data: &[u8],
+    owners: &[Option<usize>],
+) -> Result<Option<Vec<u8>>, BodyTextError> {
+    if owners.iter().all(Option::is_some) {
+        return Ok(None);
+    }
+    super::body_text::validate_memo_framing(data)?;
+    let records =
+        Record::read_all(data).map_err(|error| BodyTextError::RecordError(error.to_string()))?;
+    let memos = super::body_text::parse_memo_lists(&records)?;
+    if memos.len() != owners.len() {
+        return Err(BodyTextError::MemoStructure(
+            "원본 메모 목록과 정보의 수가 다릅니다".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    let mut memo = 0;
+    let mut index = 0;
+    while index < records.len() {
+        if records[index].tag_id == tags::HWPTAG_MEMO_LIST {
+            let visible = owners[memo].is_some();
+            memo += 1;
+            if !visible {
+                let count = word(&records[index + 1].data, 0).unwrap();
+                index += 2;
+                for _ in 0..count {
+                    index += 1;
+                    while index < records.len() && records[index].level > 1 {
+                        index += 1;
+                    }
+                }
+                continue;
+            }
+        }
+        write_record(&records[index], &mut bytes);
+        index += 1;
+    }
     Ok(Some(bytes))
 }

@@ -466,9 +466,9 @@ fn declared_row_col_x(
     Some((candidate, widths))
 }
 
-/// Separate cells keep their own edges; neighboring sides are not the same line.
-/// Consume the final cell boxes, including fragment folding, instead of rebuilding
-/// their positions from a collapsed edge grid.
+/// Render separate cell edges from final cell boxes, including fragment folding.
+/// Keep neighboring sides distinct instead of rebuilding a collapsed edge grid.
+/// Unresolved cell styles contribute no edges before zone overrides.
 pub(crate) fn render_spaced_cell_borders(
     tree: &mut PageLayoutContext,
     table: &Table,
@@ -492,7 +492,13 @@ pub(crate) fn render_spaced_cell_borders(
             .border_fill_id
             .checked_sub(1)
             .and_then(|index| styles.border_styles.get(usize::from(index)))
-            .map_or([BorderLine::default(); 4], |style| style.borders);
+            .map_or(
+                [BorderLine {
+                    line_type: BorderLineType::None,
+                    ..BorderLine::default()
+                }; 4],
+                |style| style.borders,
+            );
         for zone in &table.zones {
             let Some(style) = zone
                 .border_fill_id

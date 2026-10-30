@@ -175,6 +175,8 @@ pub struct SerializeContext {
     pub line_segs_on_hwpx_axis: bool,
     /// 새 HWP5 계보 산출물은 실제 방출된 문단의 제어 슬롯을 함께 센다.
     pub line_segs_on_paragraph_axis: bool,
+    /// Counts newly inserted template slots unless a legacy origin marker omits them.
+    pub inserted_template_slots_on_paragraph_axis: bool,
     /// 이번 HWPX 산출물에서 발생한 사용자 내용 손실 (#4430).
     ///
     /// ID 풀과 마찬가지로 한 번의 직렬화 생명주기에만 속하며, 완료 시 바이트와 함께
@@ -189,6 +191,7 @@ impl Default for SerializeContext {
             char_shape_ids: IdPool::default(),
             line_segs_on_hwpx_axis: false,
             line_segs_on_paragraph_axis: false,
+            inserted_template_slots_on_paragraph_axis: false,
             para_shape_ids: IdPool::default(),
             border_fill_ids: IdPool::default(),
             tab_pr_ids: IdPool::default(),
@@ -252,6 +255,8 @@ impl SerializeContext {
         ]
         .iter()
         .any(|path| doc.hwpx_aux_entry(path).is_some());
+        ctx.inserted_template_slots_on_paragraph_axis =
+            ctx.line_segs_on_paragraph_axis || !rhwp_origin_marker;
         ctx.line_segs_on_hwpx_axis = (doc.provenance.format
             == crate::model::provenance::SourceFormat::Hwpx
             || doc.provenance.hwpx_lineage)

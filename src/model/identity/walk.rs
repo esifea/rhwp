@@ -25,12 +25,70 @@ fn caption<'a>(stack: &mut Vec<Node<'a>>, value: Option<&'a mut Caption>) {
 
 pub(crate) fn walk(
     paras: &mut [Paragraph],
-    mut visit: impl FnMut(&mut Node<'_>) -> Result<(), HwpError>,
+    visit: impl FnMut(&mut Node<'_>) -> Result<(), HwpError>,
 ) -> Result<(), HwpError> {
+    walk_impl(paras, visit, |_, _| Ok(()))
+}
+
+/// Traverses mutable descendants with fallible stack growth and visitor errors.
+pub(crate) fn walk_with_storage<S: crate::storage::Storage>(
+    paras: &mut [Paragraph],
+    storage: &S,
+    visit: impl FnMut(&mut Node<'_>) -> Result<(), S::Error>,
+) -> Result<(), S::Error> {
+    walk_impl(paras, visit, |stack, additional| {
+        storage.reserve(stack, additional)
+    })
+}
+
+fn walk_impl<'a, E>(
+    paras: &'a mut [Paragraph],
+    mut visit: impl FnMut(&mut Node<'_>) -> Result<(), E>,
+    mut reserve: impl FnMut(&mut Vec<Node<'a>>, usize) -> Result<(), E>,
+) -> Result<(), E> {
     let mut stack = Vec::new();
-    paragraphs(&mut stack, paras);
+    reserve(&mut stack, 1)?;
+    stack.push(Node::Paragraphs(paras));
     while let Some(mut node) = stack.pop() {
         visit(&mut node)?;
+        // Reserve only the immediate children appended below. Existing capacity
+        // is reused, and the caller's Storage owns each growth decision.
+        let children = match &node {
+            Node::Paragraphs(paras) => paras.len(),
+            Node::Paragraph(para) => para.controls.len(),
+            Node::Control(control) => match control {
+                Control::Table(table) => table.cells.len() + usize::from(table.caption.is_some()),
+                Control::Shape(_) => 1,
+                Control::Picture(pic) => usize::from(pic.caption.is_some()),
+                Control::Header(_)
+                | Control::Footer(_)
+                | Control::Footnote(_)
+                | Control::Endnote(_)
+                | Control::HiddenComment(_)
+                | Control::Field(_) => 1,
+                Control::SectionDef(section) => section.master_pages.len(),
+                _ => 0,
+            },
+            Node::Shape(shape) => {
+                let drawing_children = |drawing: &crate::model::shape::DrawingObjAttr| {
+                    usize::from(drawing.caption.is_some()) + usize::from(drawing.text_box.is_some())
+                };
+                match shape {
+                    ShapeObject::Group(group) => {
+                        group.children.len() + usize::from(group.caption.is_some())
+                    }
+                    ShapeObject::Picture(pic) => usize::from(pic.caption.is_some()),
+                    ShapeObject::Chart(chart) => {
+                        usize::from(chart.caption.is_some()) + drawing_children(&chart.drawing)
+                    }
+                    ShapeObject::Ole(ole) => {
+                        usize::from(ole.caption.is_some()) + drawing_children(&ole.drawing)
+                    }
+                    _ => shape.drawing().map_or(0, drawing_children),
+                }
+            }
+        };
+        reserve(&mut stack, children)?;
         match node {
             Node::Paragraphs(paras) => {
                 stack.extend(paras.iter_mut().rev().map(Node::Paragraph));
@@ -100,10 +158,10 @@ pub(crate) enum RefNode<'a> {
     Shape(&'a ShapeObject),
 }
 
-pub(crate) fn walk_ref<S: crate::storage::Storage>(
-    paras: &[Paragraph],
+pub(crate) fn walk_ref<'a, S: crate::storage::Storage>(
+    paras: &'a [Paragraph],
     storage: &S,
-    mut visit: impl FnMut(RefNode<'_>) -> Result<(), S::Error>,
+    mut visit: impl FnMut(RefNode<'a>) -> Result<(), S::Error>,
 ) -> Result<(), S::Error> {
     let mut stack = storage.collect([RefNode::Paragraphs(paras)])?;
     while let Some(node) = stack.pop() {

@@ -398,20 +398,12 @@ impl DocumentCore {
 
     /// 문서 정보를 JSON 문자열로 반환한다.
     pub fn get_document_info(&self) -> String {
-        use crate::renderer::style_resolver::lookup_font_name_in_environment;
+        use crate::renderer::style_resolver::{
+            document_font_lookup_context, lookup_document_font_name_in_environment,
+            lookup_font_name_in_environment,
+        };
 
         let mut fonts = std::collections::BTreeSet::new();
-        if let Some(default) =
-            crate::renderer::style_resolver::missing_latin_default(&self.document).filter(|_| {
-                self.font_environment
-                    .as_ref()
-                    .and_then(|env| env.fallback_face())
-                    .is_none()
-            })
-        {
-            // 표시·측정에 쓰는 기본 face도 같은 브라우저 준비 경로로 공급한다.
-            fonts.insert(default.to_string());
-        }
         let mut font_substitutions = std::collections::BTreeSet::new();
         for (lang_idx, lang_fonts) in self.document.doc_info.font_faces.iter().enumerate() {
             for (font_idx, _) in lang_fonts.iter().enumerate() {
@@ -441,25 +433,17 @@ impl DocumentCore {
             }
         }
 
-        let font_slots = self
-            .document
-            .doc_info
-            .char_shapes
-            .iter()
-            .map(|shape| shape.font_ids);
-        let recovered_slots = crate::renderer::style_resolver::missing_char_table(&self.document)
-            .then_some([0; crate::renderer::style_resolver::LANG_COUNT]);
-        for slots in font_slots.chain(recovered_slots) {
-            for (lang_idx, font_id) in slots.iter().enumerate() {
-                let decision = lookup_font_name_in_environment(
-                    &self.document.doc_info,
+        let lookup = document_font_lookup_context(&self.document);
+        for shape in &lookup.char_shapes {
+            for (lang_idx, font_id) in shape.font_ids.iter().enumerate() {
+                let decision = lookup_document_font_name_in_environment(
+                    &self.document,
+                    &lookup,
                     lang_idx,
                     *font_id,
                     self.font_environment.as_ref(),
                 );
-                if decision.requested_face.is_none() && decision.environment_profile_id.is_some() {
-                    fonts.extend(decision.css_family_chain);
-                }
+                fonts.extend(decision.css_family_chain);
             }
         }
         let fonts_json: Vec<String> = fonts

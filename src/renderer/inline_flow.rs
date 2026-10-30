@@ -14,6 +14,8 @@ mod separator_spaces;
 mod source_addresses;
 pub(crate) use source_addresses::text_logical_starts;
 mod table_rows;
+#[cfg(feature = "pdf-import")]
+pub(crate) use table_rows::supports_table_text_rows_in_scope_with_storage;
 pub(crate) use table_rows::{
     standalone_table_fragment_owner, standalone_table_fragment_owner_with_storage,
     supports_table_text_rows, supports_table_text_rows_with_storage,
@@ -700,7 +702,8 @@ pub(crate) fn plan_with_storage<S: crate::storage::Storage>(
                         || moves_existing_row)
                 {
                     let mut prefix = Vec::new();
-                    if separator_spaces::has_flow_content(&row, &chars)
+                    if moves_existing_row
+                        && separator_spaces::has_flow_content(&row, &chars)
                         && matches!(item.content, InlineFlowContent::Table { .. })
                     {
                         let next = paragraph_row_horizontal(&horizontal, style, false);

@@ -3411,7 +3411,7 @@ fn supports_tac_host_flow(para: &Paragraph) -> bool {
     }
 }
 
-fn supports_tac_host_flow_with_storage<S: Storage>(
+pub(crate) fn supports_tac_host_flow_with_storage<S: Storage>(
     para: &Paragraph,
     storage: &S,
 ) -> Result<bool, S::Error> {

@@ -360,13 +360,6 @@ impl DocumentCore {
         // [#7436] 저장 줄 없는 번호 문단도 번호 폭을 뺀 상자로 줄을 나눈다 — 재조판 전에
         // 문서 순서로 번호 문자열을 정해 둔다.
         crate::renderer::layout::assign_numbering_markers(&mut document.sections, &styles);
-        Self::reflow_zero_height_paragraphs(
-            &mut document,
-            &styles,
-            DEFAULT_DPI,
-            include_empty,
-            include_cell_empty,
-        );
         // 캡션의 표시 여부·문서 계보와 별개로 글자모양은 실제 줄 상자를 정의한다.
         // 예약과 배치가 같은 구성 결과를 쓰도록 없는 캡션 줄만 보완한다.
         for section in &mut document.sections {
@@ -377,6 +370,13 @@ impl DocumentCore {
                 0,
             );
         }
+        Self::reflow_zero_height_paragraphs(
+            &mut document,
+            &styles,
+            DEFAULT_DPI,
+            include_empty,
+            include_cell_empty,
+        );
         Self::clear_missing_lineseg_placeholders(&mut document);
         section_activation::rebase_body_frames(
             &mut document,
@@ -2678,7 +2678,7 @@ impl DocumentCore {
             &self.file_name,
             false,
         );
-        Self::project_source_line_caches(&mut snapshot);
+        Self::project_source_line_caches_with_storage(&mut snapshot, storage)?;
         Self::refresh_doc_info_raw_cache(&mut snapshot, storage)?;
         Ok(HwpExportSnapshot { document: snapshot })
     }
@@ -2692,6 +2692,16 @@ impl DocumentCore {
     }
 
     fn project_source_line_caches(document: &mut Document) {
+        match Self::project_source_line_caches_with_storage(document, &crate::storage::Unbounded) {
+            Ok(()) => (),
+            Err(never) => match never {},
+        }
+    }
+
+    fn project_source_line_caches_with_storage<S: crate::storage::Storage>(
+        document: &mut Document,
+        storage: &S,
+    ) -> Result<(), S::Error> {
         for section in &mut document.sections {
             let project = |node: &mut crate::model::identity::walk::Node<'_>| {
                 if let crate::model::identity::walk::Node::Paragraph(para) = node {
@@ -2733,13 +2743,20 @@ impl DocumentCore {
                 Ok(())
             };
 
-            crate::model::identity::walk::walk(&mut section.paragraphs, project)
-                .expect("source cache projection is infallible");
+            crate::model::identity::walk::walk_with_storage(
+                &mut section.paragraphs,
+                storage,
+                project,
+            )?;
             for master in &mut section.section_def.master_pages {
-                crate::model::identity::walk::walk(&mut master.paragraphs, project)
-                    .expect("source cache projection is infallible");
+                crate::model::identity::walk::walk_with_storage(
+                    &mut master.paragraphs,
+                    storage,
+                    project,
+                )?;
             }
         }
+        Ok(())
     }
 
     /// HWPX 출처 IR 을 HWP 호환 형태로 변환 후 HWP 5.0 CFB 바이너리로 직렬화한다 (#178).
@@ -2902,7 +2919,10 @@ impl DocumentCore {
         let lower_markers = |doc: &mut Document| {
             super::header_footer_ops::lower_header_footer_field_markers(doc, &self.file_name, true)
         };
-        let serialized = if matches!(self.source_format, crate::parser::FileFormat::Hwp) {
+        // 컨테이너가 HWP여도 HWPX에서 변환한 저장 줄은 HWPX 계약을 유지
+        let serialized = if matches!(self.source_format, crate::parser::FileFormat::Hwp)
+            && !self.document.provenance.hwpx_lineage
+        {
             let mut doc = self.document.clone();
             if let Some((_, value)) = doc
                 .hwpx_aux_entries

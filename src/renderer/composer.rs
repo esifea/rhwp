@@ -324,6 +324,8 @@ include!("composer/pua_surface.inc.rs");
 mod empty_line_metrics;
 pub(crate) mod inline_box_rows;
 mod line_breaking;
+#[cfg(feature = "pdf-import")]
+pub(crate) use line_breaking::supports_tac_host_flow_with_storage;
 pub(crate) use line_breaking::try_reflow_line_segs;
 
 mod picture_anchor_projection;

@@ -70,7 +70,7 @@ pub(in crate::renderer::typeset) fn table_line_index(
 }
 
 /// 가용 높이(진단 포함)는 원래 저장 경계/최종 fit 위치에서만 조회한다.
-pub(super) fn prepare(
+pub(super) fn prepare<S: crate::storage::Storage>(
     para_idx: usize,
     para: &Paragraph,
     fmt: &FormattedParagraph,
@@ -78,7 +78,8 @@ pub(super) fn prepare(
     page: TacFitPage<'_>,
     available_height: impl Fn() -> f64,
     flow: TacFlowQuery<'_>,
-) -> TacFitPlan {
+    storage: &S,
+) -> Result<TacFitPlan, S::Error> {
     let dpi = flow.dpi();
     // TAC 표 카운트 및 플러시 판단
     let tac_count = para
@@ -107,7 +108,11 @@ pub(super) fn prepare(
         None
     };
     // Reserve each grown table's owner frame from the measured row body.
-    let mut grown_line_heights = fmt.line_heights.clone();
+    let mut grown_line_heights = if has_tac {
+        storage.copy_slice(&fmt.line_heights)?
+    } else {
+        Vec::new()
+    };
     let mut has_grown_table = false;
     for (ci, ctrl) in para.controls.iter().enumerate() {
         let Control::Table(table) = ctrl else {
@@ -137,6 +142,8 @@ pub(super) fn prepare(
 
         let line_index = table_line_index(para, table, ci, tac_count, fmt, &flow);
         if grown_line_heights.len() <= line_index {
+            let additional = line_index + 1 - grown_line_heights.len();
+            storage.reserve(&mut grown_line_heights, additional)?;
             grown_line_heights.resize(line_index + 1, 0.0);
         }
         // Get final frame by table height + top/bottom outer_margin
@@ -285,10 +292,10 @@ pub(super) fn prepare(
         && tac_count <= 1
         && !saved_single_tac_bottom_fits
         && !prefix_fits_separately;
-    TacFitPlan {
+    Ok(TacFitPlan {
         tac_count,
         has_tac,
         measured_tac_floor,
         advance_before_place,
-    }
+    })
 }

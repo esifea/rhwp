@@ -235,7 +235,8 @@ pub(crate) fn atomic_tac_table_occupancy(
     };
     let mut height = frame_height;
     let mut baseline = frame_height * 0.85;
-    let caption_height = crate::renderer::composer::caption_height_px(&table.caption, dpi);
+    let caption_height =
+        crate::renderer::composer::caption_height_px_in_context(&table.caption, Some(styles), dpi);
     if let Some(caption) = table.caption.as_ref() {
         let spacing = super::hwpunit_to_px(caption.spacing as i32, dpi);
         use crate::model::shape::CaptionDirection;
@@ -19880,9 +19881,21 @@ impl LayoutEngine {
         if generated_frame_trim > 0.0 {
             return generated_frame_trim;
         }
-        let reflow_trim = self.reflow_cut_trailing_spacing(cell, table, units, end_cut, styles);
-        if reflow_trim > 0.0 {
-            return reflow_trim;
+        if end_cut
+            .checked_sub(1)
+            .and_then(|index| units.get(index))
+            .is_some_and(|closing| {
+                closing.empty_spacer
+                    || units
+                        .get(end_cut)
+                        .is_some_and(|next| next.para_idx != closing.para_idx)
+                    || self.generated_cell_allows_page_end_spacing_trim(table, cell, units)
+            })
+        {
+            let reflow_trim = self.reflow_cut_trailing_spacing(cell, table, units, end_cut, styles);
+            if reflow_trim > 0.0 {
+                return reflow_trim;
+            }
         }
         if end_cut > 0 && end_cut < units.len() {
             let next = &units[end_cut];
@@ -20199,6 +20212,48 @@ impl LayoutEngine {
             }
         }
         0.0
+    }
+
+    fn generated_cell_allows_page_end_spacing_trim(
+        &self,
+        table: &crate::model::table::Table,
+        cell: &crate::model::table::Cell,
+        units: &[CellUnit],
+    ) -> bool {
+        let profile = self.profile.get();
+        if !(profile.hwpx_stored_layout() || profile.hwp5_stored_pagination_layout())
+            || cell.height == 0
+            || cell.height > i32::MAX as u32
+            || units.is_empty()
+            || cell
+                .paragraphs
+                .iter()
+                .any(|para| para.stored_text_partition_is_dirty() || para.cell_format_vpos_dirty)
+        {
+            return false;
+        }
+        let native_generated_lines = profile.hwp5_stored_pagination_layout();
+        if !native_generated_lines && (profile.session_edited() || cell.dirty_flag) {
+            return false;
+        }
+        let (_, _, top, bottom) = self.resolve_cell_padding(cell, table);
+        let declared = hwpunit_to_px(cell.height as i32, self.dpi);
+        units
+            .iter()
+            .try_fold(top + bottom, |content, unit| {
+                if unit.nested_row.is_some()
+                    || unit.nested_table_fragment.is_some()
+                    || unit.mixed_nested_fragment
+                    || unit.top_and_bottom_flow
+                    || unit.non_inline_control_range.is_some()
+                {
+                    return None;
+                }
+                let content = content + unit.height;
+                (content.is_finite() && (native_generated_lines || content <= declared))
+                    .then_some(content)
+            })
+            .is_some()
     }
 
     /// Transfers only the trailing gap that crosses a saved opening frame.
@@ -24052,8 +24107,7 @@ impl LayoutEngine {
                 h += nested_header;
             }
             if stop_after_saved_cut
-                || self.native_saved_reset_cut_trailing_trim(table, cell, &units, start, j, styles)
-                    > 0.0
+                || self.physical_cut_trailing_trim(table, cell, &units, start, j, styles) > 0.0
                 || self.native_first_line_restart_cut_trailing_trim(
                     table, cell, &units, start, j, styles,
                 ) > 0.0
@@ -25083,7 +25137,7 @@ impl LayoutEngine {
             let trailing_trim = if end_cut.is_empty() {
                 0.0
             } else {
-                self.native_saved_reset_cut_trailing_trim(table, cell, &units, su, eu, styles)
+                self.physical_cut_trailing_trim(table, cell, &units, su, eu, styles)
             };
             let content: f64 =
                 (units[su..eu].iter().map(|u| u.height).sum::<f64>() - trailing_trim).max(0.0);

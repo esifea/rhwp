@@ -801,9 +801,10 @@ fn decode_viewtext_paragraph_stream(
 fn parse_visible_section(
     data: &[u8],
     doc_info: &crate::model::document::DocInfo,
-) -> Result<crate::model::document::Section, body_text::BodyTextError> {
+) -> Result<(crate::model::document::Section, bool), body_text::BodyTextError> {
     let projected = tracked_viewtext::project(data, doc_info)?;
-    body_text::parse_body_text_section(projected.as_deref().unwrap_or(data))
+    let section = body_text::parse_body_text_section(projected.as_deref().unwrap_or(data))?;
+    Ok((section, projected.is_some()))
 }
 
 /// CfbReader로 섹션들 파싱
@@ -819,6 +820,7 @@ fn parse_sections_strict(
     doc_info: &crate::model::document::DocInfo,
 ) -> Result<Vec<crate::model::document::Section>, ParseError> {
     let mut sections = Vec::new();
+    let mut visibility_projected = false;
 
     for i in 0..section_count {
         let section_output_limit = decompression_budget.stream_limit();
@@ -875,7 +877,8 @@ fn parse_sections_strict(
             .map_err(ParseError::CfbError)?;
 
         match parse_visible_section(&section_data, doc_info) {
-            Ok(mut section) => {
+            Ok((mut section, projected)) => {
+                visibility_projected |= projected;
                 // 원본 BodyText 스트림 보존 (라운드트립용)
                 section.raw_stream = Some(section_data);
                 sections.push(section);
@@ -897,7 +900,8 @@ fn parse_sections_strict(
 
     // [#6868 잔여] 구역 경계를 넘는 누름틀의 종료 마커를 잇는다 — 구역 하나를 파싱하는
     // 동안에는 앞 구역에서 열린 필드를 볼 수 없다.
-    body_text::link_memo_lists_across_sections(&mut sections).map_err(ParseError::BodyTextError)?;
+    body_text::link_memo_lists_across_sections(&mut sections, visibility_projected)
+        .map_err(ParseError::BodyTextError)?;
     body_text::link_orphan_field_ends_across_sections(&mut sections);
 
     Ok(sections)
@@ -960,6 +964,7 @@ fn parse_hwp_with_lenient(
     // BodyText 섹션별 파싱
     let section_count = lenient.section_count();
     let mut sections = Vec::new();
+    let mut visibility_projected = false;
 
     for i in 0..section_count {
         let section_output_limit = decompression_budget.stream_limit();
@@ -1015,7 +1020,8 @@ fn parse_hwp_with_lenient(
             .map_err(ParseError::CfbError)?;
 
         match parse_visible_section(&section_data, &doc_info) {
-            Ok(mut section) => {
+            Ok((mut section, projected)) => {
+                visibility_projected |= projected;
                 section.raw_stream = Some(section_data);
                 sections.push(section);
             }
@@ -1034,7 +1040,8 @@ fn parse_hwp_with_lenient(
     }
 
     // [#6868 잔여] 구역 경계를 넘는 누름틀의 종료 마커 — strict 경로와 같다.
-    body_text::link_memo_lists_across_sections(&mut sections).map_err(ParseError::BodyTextError)?;
+    body_text::link_memo_lists_across_sections(&mut sections, visibility_projected)
+        .map_err(ParseError::BodyTextError)?;
     body_text::link_orphan_field_ends_across_sections(&mut sections);
 
     // BinData 로드 시도

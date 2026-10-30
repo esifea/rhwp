@@ -20,7 +20,7 @@ pub const LANG_COUNT: usize = 7;
 
 mod ascii_punctuation;
 mod missing_fonts;
-pub(crate) use missing_fonts::{missing_char_table, missing_latin_default};
+pub(crate) use missing_fonts::missing_char_table;
 mod page_number;
 mod resolved;
 pub(crate) use crate::storage;
@@ -162,15 +162,9 @@ pub(crate) fn resolve_styles_with_environment(
                     .get(lang)
                     .and_then(|fonts| fonts.get(shape.font_ids[lang] as usize))
                     .is_none();
-                let selection_info = if missing_source_slot
-                    && environment.and_then(|env| env.fallback_face()).is_some()
-                {
-                    &document.doc_info
-                } else {
-                    &lookup
-                };
-                let decision = lookup_font_name_in_environment(
-                    selection_info,
+                let decision = lookup_document_font_name_in_environment(
+                    document,
+                    &lookup,
                     lang,
                     shape.font_ids[lang],
                     environment,
@@ -1223,6 +1217,36 @@ fn try_lookup_font_name_decision<A: storage::Storage>(
         }
     }
     Ok(decision)
+}
+
+/// Borrows or projects the same missing-font defaults used by resolved styles.
+/// Keeps recovered character shapes and faces out of the source document.
+pub(crate) fn document_font_lookup_context(document: &Document) -> std::borrow::Cow<'_, DocInfo> {
+    missing_fonts::lookup_context(document)
+}
+
+/// Selects a source or recovered slot with the renderer's environment precedence.
+/// An explicit fallback replaces a missing source slot before implicit defaults apply.
+pub(crate) fn lookup_document_font_name_in_environment(
+    document: &Document,
+    lookup: &DocInfo,
+    lang_index: usize,
+    font_id: u16,
+    environment: Option<&super::font_environment::FontEnvironment>,
+) -> FontNameDecision {
+    let missing_source_slot = document
+        .doc_info
+        .font_faces
+        .get(lang_index)
+        .and_then(|fonts| fonts.get(font_id as usize))
+        .is_none();
+    let selection_info =
+        if missing_source_slot && environment.and_then(|env| env.fallback_face()).is_some() {
+            &document.doc_info
+        } else {
+            lookup
+        };
+    lookup_font_name_in_environment(selection_info, lang_index, font_id, environment)
 }
 
 pub(crate) fn lookup_font_name_in_environment(

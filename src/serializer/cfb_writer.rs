@@ -184,14 +184,24 @@ where
         }
     }
     let has_native_tail = doc.sections.iter().any(|s| s.trailing_lists.is_some());
+    let has_hidden_memo_owners = doc
+        .sections
+        .iter()
+        .filter_map(|s| s.trailing_lists.as_ref()?.source_memo_owners.as_deref())
+        .any(|owners| owners.iter().any(Option::is_none));
+    // Hidden memo ownership needs every source section's history on reopen.
+    // Form preparation preserves reusable input and only assigns identities to
+    // sections already rebuilding, so this check includes its raw invalidation.
+    let body_history_changed = || {
+        doc.sections
+            .iter()
+            .any(|s| !s.raw_provenance_permits_reuse())
+    };
     let rebuild_memo_tail = if has_native_tail {
         crate::model::section_tail::memo_projection_changed(doc)
+            || (has_hidden_memo_owners && body_history_changed())
     } else {
-        !memo_lists.is_empty()
-            && doc
-                .sections
-                .iter()
-                .any(|s| !s.raw_provenance_permits_reuse())
+        !memo_lists.is_empty() && body_history_changed()
     };
 
     for (section_index, section) in doc.sections.iter().enumerate() {
@@ -215,13 +225,22 @@ where
         if split_starts.is_empty() {
             let prepared =
                 super::form_identity::prepare_section(section, doc, &mut form_id_allocator)?;
-            let memos = rebuild_memo_tail.then(|| {
-                if section_index + 1 == doc.sections.len() {
+            let memos = if rebuild_memo_tail {
+                Some(if section_index + 1 == doc.sections.len() {
                     memo_lists.as_slice()
                 } else {
                     &[]
-                }
-            });
+                })
+            } else if has_native_tail
+                && section.trailing_lists.is_none()
+                && !prepared.raw_provenance_permits_reuse()
+            {
+                // Native lists remain in their original section, including lists
+                // whose anchors belong to this rebuilt body section.
+                Some(&[][..])
+            } else {
+                None
+            };
             let bytes = super::body_text::try_serialize_section_for_version(
                 &prepared,
                 output_version,
@@ -229,14 +248,26 @@ where
                 storage,
             )
             .map_err(storage_error)?;
-            if prepared.raw_provenance_permits_reuse() {
-                if let Some(visible) =
-                    crate::parser::tracked_viewtext::project(&bytes, &doc.doc_info)
-                        .map_err(|error| SerializeError::UnsupportedInput(error.to_string()))?
-                {
-                    // An unedited review stream belongs in ViewText. Reusing it
-                    // as BodyText alone loses the distinction between current
-                    // content and review history in a Hancom round trip.
+            if prepared.raw_provenance_permits_reuse() && !rebuild_memo_tail {
+                let projected = crate::parser::tracked_viewtext::project(&bytes, &doc.doc_info)
+                    .map_err(|error| SerializeError::UnsupportedInput(error.to_string()))?;
+                let memo_owners = section
+                    .trailing_lists
+                    .as_ref()
+                    .and_then(|tail| tail.source_memo_owners.as_deref());
+                let visible_memos = memo_owners
+                    .map(|owners| {
+                        crate::parser::tracked_viewtext::project_memo_lists(
+                            projected.as_deref().unwrap_or(&bytes),
+                            owners,
+                        )
+                    })
+                    .transpose()
+                    .map_err(|error| SerializeError::UnsupportedInput(error.to_string()))?
+                    .flatten();
+                if let Some(visible) = visible_memos.or(projected) {
+                    // ViewText keeps authenticated source owners and full notes;
+                    // BodyText contains only current content and visible notes.
                     viewtext_history.push((section_bytes_list.len(), bytes));
                     section_bytes_list.push(visible);
                     continue;

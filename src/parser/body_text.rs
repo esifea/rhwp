@@ -95,18 +95,7 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
     let memo_lists = parse_memo_lists(&records)?;
 
     // 본문 뒤 level 1 LIST_HEADER/MEMO_LIST는 독립된 저장 범위다.
-    let tail_start = records
-        .iter()
-        .rposition(|r| r.tag_id == tags::HWPTAG_PARA_HEADER && r.level == 0)
-        .and_then(|last| {
-            records[last + 1..]
-                .iter()
-                .position(|r| {
-                    r.level == 1
-                        && matches!(r.tag_id, tags::HWPTAG_LIST_HEADER | tags::HWPTAG_MEMO_LIST)
-                })
-                .map(|offset| last + 1 + offset)
-        });
+    let tail_start = section_tail_start(&records);
     let body_end = tail_start.unwrap_or(records.len());
     let mut section = Section::default();
     let mut idx = 0;
@@ -155,18 +144,48 @@ pub fn parse_body_text_section(data: &[u8]) -> Result<Section, BodyTextError> {
             .section_def
             .master_pages
             .extend(master_page_scope::parse_extended_master_pages(&tail));
+        let local_master_projection_seal = Some(
+            crate::model::section_tail::local_master_projection_digest(&section),
+        );
         section.trailing_lists = Some(crate::model::section_tail::SectionTail {
             records: tail,
             projection_seal: None,
             master_projection_seal: None,
+            local_master_projection_seal,
+            ..Default::default()
         });
     }
 
     Ok(section)
 }
 
-/// Retain recognizable memo
-fn validate_memo_framing(data: &[u8]) -> Result<(), BodyTextError> {
+/// Returns the section-owned tail after the final body paragraph.
+/// A leading level-1 memo list also owns the tail of an empty projected body.
+pub(super) fn section_tail_start(records: &[Record]) -> Option<usize> {
+    records
+        .iter()
+        .rposition(|r| r.tag_id == tags::HWPTAG_PARA_HEADER && r.level == 0)
+        .map_or_else(
+            || {
+                records
+                    .first()
+                    .filter(|r| r.level == 1 && r.tag_id == tags::HWPTAG_MEMO_LIST)
+                    .map(|_| 0)
+            },
+            |last| {
+                records[last + 1..]
+                    .iter()
+                    .position(|r| {
+                        r.level == 1
+                            && matches!(r.tag_id, tags::HWPTAG_LIST_HEADER | tags::HWPTAG_MEMO_LIST)
+                    })
+                    .map(|offset| last + 1 + offset)
+            },
+        )
+}
+
+/// Rejects truncated record framing after a recognizable memo record.
+pub(super) fn validate_memo_framing(data: &[u8]) -> Result<(), BodyTextError> {
     let malformed = || BodyTextError::MemoStructure("truncated memo record framing".into());
     let mut position = 0;
     let mut memo_context = false;
@@ -217,7 +236,7 @@ fn validate_memo_framing(data: &[u8]) -> Result<(), BodyTextError> {
 
 /// Decode memo lists independently.
 /// Each count owns its sibling paragraph group.
-fn parse_memo_lists(records: &[Record]) -> Result<Vec<Field>, BodyTextError> {
+pub(super) fn parse_memo_lists(records: &[Record]) -> Result<Vec<Field>, BodyTextError> {
     let malformed = || BodyTextError::MemoStructure("incomplete memo list".into());
     let mut memos = Vec::new();
     let mut index = 0;
@@ -326,9 +345,11 @@ fn attach_memo_lists(sections: &mut [Section], memos: Vec<Field>) -> usize {
     by_index.values().map(VecDeque::len).sum()
 }
 
-/// Native memo lists in the final section of which fields belong to earlier sections.
+/// Authenticates original cross-section memo ownership before visible attachment.
+/// Rejects partially hidden duplicate identities within one source section.
 pub(crate) fn link_memo_lists_across_sections(
     sections: &mut [Section],
+    visibility_projected: bool,
 ) -> Result<(), BodyTextError> {
     let mut memos = Vec::new();
 
@@ -340,13 +361,149 @@ pub(crate) fn link_memo_lists_across_sections(
         }
     }
 
-    if attach_memo_lists(sections, memos) != 0 {
-        return Err(BodyTextError::MemoStructure(
-            "memo list has no matching field".into(),
-        ));
+    if memos.is_empty() {
+        return Ok(());
+    }
+    let unmatched = || BodyTextError::MemoStructure("memo list has no matching field".into());
+    if !visibility_projected {
+        return if attach_memo_lists(sections, memos) == 0 {
+            Ok(())
+        } else {
+            Err(unmatched())
+        };
     }
 
+    // Source ownership is document-wide. Projection may remove a whole ancestor
+    // control, including memo fields whose lists live in a different section.
+    let mut source_sections = sections
+        .iter()
+        .map(|section| {
+            section
+                .raw_stream
+                .as_deref()
+                .map(parse_body_text_section)
+                .transpose()
+                .map(Option::unwrap_or_default)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // Section-local parsing cannot decide ownership of foreign lists. Clear its
+    // provisional notes before applying the document-wide source FIFO once.
+    for section in &mut source_sections {
+        let _ = walk(&mut section.paragraphs, |node| {
+            if let Node::Control(Control::Field(field)) = node {
+                if field.is_memo() {
+                    field.memo_paragraphs.clear();
+                    field.memo_text_direction = None;
+                }
+            }
+            Ok(())
+        });
+    }
+    if attach_memo_lists(&mut source_sections, memos) != 0 {
+        return Err(unmatched());
+    }
+
+    let mut source_fields: BTreeMap<_, VecDeque<Field>> = BTreeMap::new();
+    for (section_index, section) in source_sections.iter_mut().enumerate() {
+        let _ = walk(&mut section.paragraphs, |node| {
+            if let Node::Control(Control::Field(field)) = node {
+                if field.is_memo() {
+                    source_fields
+                        .entry((section_index, memo_owner_key(field)))
+                        .or_default()
+                        .push_back(field.clone());
+                }
+            }
+            Ok(())
+        });
+    }
+    let mut visible_counts: BTreeMap<_, usize> = BTreeMap::new();
+    for (section_index, section) in sections.iter_mut().enumerate() {
+        let _ = walk(&mut section.paragraphs, |node| {
+            if let Node::Control(Control::Field(field)) = node {
+                if field.is_memo() {
+                    *visible_counts
+                        .entry((section_index, memo_owner_key(field)))
+                        .or_default() += 1;
+                }
+            }
+            Ok(())
+        });
+    }
+    for (key, &count) in &visible_counts {
+        let source_count = source_fields.get(key).map_or(0, VecDeque::len);
+        if count > source_count {
+            return Err(unmatched());
+        }
+        if count != source_count {
+            return Err(BodyTextError::MemoStructure(
+                "숨긴 메모 필드와 본문 필드의 원본 식별자가 중복됩니다".into(),
+            ));
+        }
+    }
+    let mut source_owners: BTreeMap<u32, VecDeque<_>> = BTreeMap::new();
+    for (section_index, section) in source_sections.iter_mut().enumerate() {
+        let _ = walk(&mut section.paragraphs, |node| {
+            if let Node::Control(Control::Field(field)) = node {
+                if field.is_memo() {
+                    let key = (section_index, memo_owner_key(field));
+                    let owner = visible_counts.contains_key(&key).then_some(section_index);
+                    source_owners
+                        .entry(field.hwp_memo_index())
+                        .or_default()
+                        .push_back(owner);
+                }
+            }
+            Ok(())
+        });
+    }
+    for section in sections.iter_mut() {
+        if let Some(tail) = &mut section.trailing_lists {
+            let mut owners = Vec::new();
+            for record in &tail.records {
+                if record.tag_id == tags::HWPTAG_MEMO_LIST {
+                    let index = u32::from_le_bytes(record.data[..4].try_into().unwrap());
+                    owners.push(
+                        source_owners
+                            .get_mut(&index)
+                            .and_then(VecDeque::pop_front)
+                            .ok_or_else(unmatched)?,
+                    );
+                }
+            }
+            tail.source_memo_owners = Some(owners);
+        }
+    }
+    for (section_index, section) in sections.iter_mut().enumerate() {
+        let _ = walk(&mut section.paragraphs, |node| {
+            if let Node::Control(Control::Field(field)) = node {
+                if field.is_memo() {
+                    if let Some(source) = source_fields
+                        .get_mut(&(section_index, memo_owner_key(field)))
+                        .and_then(VecDeque::pop_front)
+                    {
+                        field.field_type = FieldType::Memo;
+                        field.memo_index = source.memo_index;
+                        field.memo_paragraphs = source.memo_paragraphs;
+                        field.memo_text_direction = source.memo_text_direction;
+                    }
+                }
+            }
+            Ok(())
+        });
+    }
     Ok(())
+}
+
+fn memo_owner_key(field: &Field) -> (u32, u32, u32, u8, u32, String) {
+    (
+        field.field_id,
+        field.ctrl_id,
+        field.properties,
+        field.extra_properties,
+        field.hwp_memo_index(),
+        field.command.clone(),
+    )
 }
 
 /// 다단락 필드의 종료 마커에 짝 `fieldBegin` 의 id 를 채운다.

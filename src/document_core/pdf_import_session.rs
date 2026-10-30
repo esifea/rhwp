@@ -177,6 +177,7 @@ impl PdfImportSession {
                     crate::parser::pdf::PdfImportError::backend(e),
                 )
             })?;
+            self.validate_editor_atomic_hosts(&parsed.document)?;
             let core = DocumentCore::from_parsed_document_with_storage(
                 parsed,
                 crate::parser::FileFormat::Hwpx,
@@ -194,6 +195,62 @@ impl PdfImportSession {
             self.failed = true;
         }
         output
+    }
+
+    fn validate_editor_atomic_hosts(
+        &self,
+        document: &crate::model::document::Document,
+    ) -> Result<(), HwpError> {
+        use crate::model::{control::Control, identity::walk};
+        use crate::storage::Storage;
+
+        let storage = crate::parser::pdf::allocation::Allocation(&self.request);
+        let check = |paragraphs: &[crate::model::paragraph::Paragraph], body: bool| {
+            let mut unsupported = false;
+            walk::walk_ref(paragraphs, &storage, |node| {
+                let walk::RefNode::Paragraph(para) = node else {
+                    return Ok(());
+                };
+                storage.bytes(0)?;
+                if crate::renderer::composer::supports_tac_host_flow_with_storage(para, &storage)? {
+                    unsupported = true;
+                    return Ok(());
+                }
+                let is_body = body && paragraphs.as_ptr_range().contains(&(para as *const _));
+                let rows_may_change = is_body
+                    || matches!(para.line_segs.as_slice(), [line]
+                        if line.line_height == 0 || line.is_missing_lineseg_placeholder());
+                let atomic_table = para.controls.iter().any(|control| {
+                    matches!(control, Control::Table(table)
+                            if table.common.treat_as_char
+                                && table.page_break == crate::model::table::TablePageBreak::None)
+                });
+                if atomic_table
+                    && crate::renderer::inline_flow::supports_table_text_rows_in_scope_with_storage(
+                        para,
+                        rows_may_change,
+                        &storage,
+                    )?
+                {
+                    unsupported = true;
+                }
+                Ok(())
+            })
+            .map_err(|error| self.storage_error("editor atomic admission", error))?;
+            if unsupported {
+                return Err(HwpError::InvalidFile(
+                    "PDF_EDITOR_REOPEN: unsupported atomic table host".into(),
+                ));
+            }
+            Ok(())
+        };
+        for section in &document.sections {
+            check(&section.paragraphs, true)?;
+            for master in &section.section_def.master_pages {
+                check(&master.paragraphs, false)?;
+            }
+        }
+        Ok(())
     }
 
     /// A failed request cannot be reused. Create a fresh session for recovery.

@@ -4487,10 +4487,17 @@ impl TypesetEngine {
             && crate::renderer::table_reflows_cell_content(table)
             && crate::renderer::table_row_body_height(&ft.cumulative_heights)
                 > hwpunit_to_px(table.common.height as i32, self.dpi) + 0.5;
-        let table_height = if (para.line_segs.is_empty() || reflows_cell_content)
-            && table_height + 0.5 < ft.total_height
-        {
+        // Stored host rows close the paragraph after all its text and objects.
+        // Growing the object frame must leave after-spacing with that owner.
+        let measured_frame_height = if reflows_cell_content && !para.line_segs.is_empty() {
+            ft.total_height - ft.host_spacing.spacing_after_only
+        } else {
             ft.total_height
+        };
+        let table_height = if (para.line_segs.is_empty() || reflows_cell_content)
+            && table_height + 0.5 < measured_frame_height
+        {
+            measured_frame_height
         } else {
             table_height
         };

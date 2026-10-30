@@ -5594,9 +5594,9 @@ impl LayoutEngine {
                 if row_band::owns_fragment_bottom(cell_row, cell.row_span as usize, fold_row)
                     && !is_repeated_header_cell
                 {
-                    // Only a continuing cell's own source line can authorize a fold.
-                    // Generated rows retain their full advance; completed siblings
-                    // do not transfer spacing to the continuing cell's frame.
+                    // Only a top-anchored continuing cell can release source spacing.
+                    // Center/Bottom alignment slack belongs to the accepted frame;
+                    // folding it after placement would change the alignment.
                     if let Some((su, eu)) = cut_units {
                         let units = self.cell_units(cell, table, styles);
                         let eu = eu.min(units.len());
@@ -5611,9 +5611,10 @@ impl LayoutEngine {
                                     cell.paragraphs.get(pi)?.line_segs.get(end - 1)
                                 })
                                 .filter(|seg| {
-                                    seg.tag
-                                        & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY
-                                        == 0
+                                    effective_align == VerticalAlign::Top
+                                        && seg.tag
+                                            & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY
+                                            == 0
                                 })
                                 .map(|seg| hwpunit_to_px(seg.line_spacing.max(0), self.dpi))
                                 .unwrap_or(0.0);

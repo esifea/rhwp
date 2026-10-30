@@ -55,7 +55,9 @@ fn plain_para_payload(payload: ParaPayload<'_>) -> Vec<u8> {
     }
 }
 
-/// Section을 레코드 바이너리 스트림으로 직렬화
+/// Serializes a section and rebuilds its edited memo lists.
+/// Preserves foreign native spans and FIFO ownership for duplicate indexes.
+/// Use `serialize_hwp` to update memo storage and owners across the document.
 pub fn serialize_section(section: &Section) -> Vec<u8> {
     serialize_section_with_memo_lists(section, None)
 }
@@ -95,13 +97,18 @@ fn try_serialize_section_inner<S: crate::storage::Storage>(
     memo_lists: Option<&[Field]>,
     storage: &S,
 ) -> Result<Vec<u8>, S::Error> {
+    let local_memos_changed = section.trailing_lists.as_ref().is_some_and(|tail| {
+        tail.local_memo_projection_seal.is_some_and(|seal| {
+            seal != crate::model::section_tail::local_memo_projection_digest(section)
+        })
+    });
     // 원본 스트림이 있으면 그대로 반환 (완벽한 라운드트립).
     //
     // [#4488] 다만 공개 모델 직접 변경은 raw_stream 을 무효화하지 않으므로,
     // 파싱(+로드 픽스업) 시점에 봉인한 (모델, raw) 다이제스트 쌍과 현재 상태가
     // 둘 다 일치할 때만 통과한다 — 불일치·raw 교체는 아래 모델 writer 로
     // 재생성한다. 봉인 계약은 model::raw_provenance 참조.
-    if memo_lists.is_none() && section.raw_provenance_permits_reuse() {
+    if memo_lists.is_none() && !local_memos_changed && section.raw_provenance_permits_reuse() {
         if let Some(ref raw) = section.raw_stream {
             return storage.copy_slice(raw);
         }
@@ -206,11 +213,47 @@ fn try_serialize_section_inner<S: crate::storage::Storage>(
     }
     if let Some(tail) = &section.trailing_lists {
         // Rebuild only memo-owned spans; independent lists retain their bytes.
-        let rewrite_memos = memo_lists_override || tail.projection_seal.is_none();
+        let rewrite_memos =
+            memo_lists_override || tail.projection_seal.is_none() || local_memos_changed;
+        let mut emitted = storage.vec(if rewrite_memos && !memo_lists_override {
+            memo_lists.len()
+        } else {
+            0
+        })?;
+        if rewrite_memos && !memo_lists_override {
+            for _ in memo_lists {
+                storage.push(&mut emitted, false)?;
+            }
+        }
         let mut index = 0;
         while index < tail.records.len() {
             let raw = &tail.records[index];
-            if rewrite_memos && raw.tag_id == tags::HWPTAG_MEMO_LIST && raw.level == 1 {
+            let owns_memo = memo_lists_override
+                || tail
+                    .local_memo_spans
+                    .as_ref()
+                    .is_none_or(|spans| spans.binary_search(&index).is_ok());
+            if rewrite_memos && owns_memo && raw.tag_id == tags::HWPTAG_MEMO_LIST && raw.level == 1
+            {
+                // Replace local lists in place to retain FIFO ownership when
+                // foreign lists use the same memo index.
+                if !memo_lists_override {
+                    if let Some(bytes) = raw.data.get(..4) {
+                        let memo_index = u32::from_le_bytes(bytes.try_into().unwrap());
+                        if let Some((position, field)) =
+                            memo_lists.iter().enumerate().find(|(position, field)| {
+                                !emitted[*position] && field.hwp_memo_index() == memo_index
+                            })
+                        {
+                            try_serialize_memo_tail(
+                                std::slice::from_ref(field),
+                                &mut records,
+                                storage,
+                            )?;
+                            emitted[position] = true;
+                        }
+                    }
+                }
                 index = memo_tail_span_end(&tail.records, index);
                 continue;
             }
@@ -226,7 +269,19 @@ fn try_serialize_section_inner<S: crate::storage::Storage>(
             index += 1;
         }
         if rewrite_memos && has_memo_tail {
-            try_serialize_memo_tail(memo_lists, &mut records, storage)?;
+            if memo_lists_override {
+                try_serialize_memo_tail(memo_lists, &mut records, storage)?;
+            } else {
+                for (field, emitted) in memo_lists.iter().zip(emitted) {
+                    if !emitted {
+                        try_serialize_memo_tail(
+                            std::slice::from_ref(field),
+                            &mut records,
+                            storage,
+                        )?;
+                    }
+                }
+            }
         }
     } else {
         if has_memo_tail {
