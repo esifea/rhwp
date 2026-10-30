@@ -291,3 +291,106 @@ fn hwp5_substitute_font_type_survives_hwp_and_hwpx_roundtrip() {
         );
     }
 }
+
+/// 독립 2020 Print PDF 24~27쪽의 셀 내용 소유를 검사한다.
+/// 마지막 줄 뒤 간격 때문에 다음 쪽 첫 줄이 밀리는 회귀를 좌표 없이 검출한다.
+#[test]
+fn native_source_table_preserves_multipage_cell_content_ownership() {
+    use rhwp::model::control::Control;
+    use serde_json::Value;
+
+    fn compact(text: &str) -> String {
+        text.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    fn collect<'a>(node: &'a Value, kind: &str, out: &mut Vec<&'a Value>) {
+        if node["type"] == kind {
+            out.push(node);
+        }
+        if let Some(children) = node["children"].as_array() {
+            for child in children {
+                collect(child, kind, out);
+            }
+        }
+    }
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("samples/issue6776/78494-virtual-convergence-industry-decree.hwpx");
+    let core =
+        DocumentCore::from_bytes(&std::fs::read(path).expect("원본 읽기")).expect("원본 열기");
+    assert_eq!(core.page_count(), 74, "독립 PDF와 같은 전체 쪽수");
+    let source = core.document().sections[0].paragraphs[229]
+        .controls
+        .iter()
+        .find_map(|control| match control {
+            Control::Table(table) => table
+                .cells
+                .iter()
+                .find(|cell| cell.row == 1 && cell.col == 1),
+            _ => None,
+        })
+        .expect("원문 비교 셀");
+    let expected: String = source
+        .paragraphs
+        .iter()
+        .map(|para| compact(&para.text))
+        .collect();
+    let starts = [
+        "제12조(지역별가상융합산업지원센터)",
+        "첨부하여과학기술정보통신부장관",
+        "라지원센터의지정취소및업무정",
+        "운영등에관하여필요한사항은과",
+    ];
+    let ends = [
+        "하는신청서에다음각호의서류를",
+        "지정하거나,법제19조제4항에따",
+        "한사항외에지원센터의지정절차,",
+        "학기술정보통신부령으로정한다.",
+    ];
+    let mut complete = String::new();
+    for (index, page) in (23..27).enumerate() {
+        let root: Value = serde_json::from_str(
+            &core
+                .build_page_render_tree(page)
+                .expect("쪽 트리 생성")
+                .root
+                .to_json(),
+        )
+        .expect("쪽 트리 JSON");
+        let mut tables = Vec::new();
+        collect(&root, "Table", &mut tables);
+        let owned: Vec<_> = tables
+            .into_iter()
+            .filter(|table| table["pi"] == 229)
+            .collect();
+        assert_eq!(owned.len(), 1, "{}쪽의 원문 표 조각 하나", page + 1);
+        let mut cells = Vec::new();
+        collect(owned[0], "Cell", &mut cells);
+        let cells: Vec<_> = cells
+            .into_iter()
+            .filter(|cell| cell["row"] == 1 && cell["col"] == 1)
+            .collect();
+        assert_eq!(cells.len(), 1, "{}쪽의 소유 셀 하나", page + 1);
+        let mut runs = Vec::new();
+        collect(cells[0], "TextRun", &mut runs);
+        let text: String = runs
+            .iter()
+            .map(|run| compact(run["text"].as_str().expect("텍스트 run 문자열")))
+            .collect();
+        assert!(
+            text.starts_with(starts[index]),
+            "{}쪽의 시작 내용: {text}",
+            page + 1
+        );
+        assert!(
+            text.ends_with(ends[index]),
+            "{}쪽의 끝 내용: {text}",
+            page + 1
+        );
+        complete.push_str(&text);
+    }
+    assert_eq!(
+        complete, expected,
+        "셀 내용은 원문 순서대로 한 번씩 보존되어야 한다"
+    );
+}

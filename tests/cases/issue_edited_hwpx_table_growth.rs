@@ -27,7 +27,8 @@ fn paragraph(text: &str, cached: bool) -> Paragraph {
         line_segs: if cached {
             vec![LineSeg {
                 line_height: 1200,
-                text_height: 1200,
+                // The saved line box includes leading around the 1000HU glyph box.
+                text_height: 1000,
                 baseline_distance: 1000,
                 line_spacing: 300,
                 segment_width: 15000,
@@ -757,9 +758,17 @@ fn issue_edited_hwpx_table_growth_cacheless_declared_contradiction_keeps_table_h
     let painted = paint(&core);
     assert_flow(&source, &painted);
     let height = painted.tables[0].bottom - painted.tables[0].top;
+    // 저장 줄이 없는 새 셀은 입력의 행별 하한을 유지한다.
+    // 더 작은 표 선언만으로 이 행들을 비례 축소하지 않는다.
+    let row_height = f64::from(table(&source).cells[0].height) * DPI / 7200.0;
+    let row_extent = row_height * f64::from(table(&source).row_count);
     assert!(
-        (height - 88.0).abs() <= 0.5,
-        "short fresh content fits the declared 6600HU frame: {height}"
+        row_extent > f64::from(table(&source).common.height) * DPI / 7200.0,
+        "픽스처의 행별 하한 합은 더 작은 표 선언과 모순되어야 한다"
+    );
+    assert!(
+        (height - row_extent).abs() <= 0.5,
+        "새 행들은 입력의 높이 합을 유지한다: {height} vs {row_extent}"
     );
 }
 

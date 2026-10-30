@@ -257,3 +257,219 @@ fn generated_hwpx_preserves_hancom_page_and_cell_ownership() {
 fn native_hwp_without_saved_lines_preserves_hancom_page_and_cell_ownership() {
     check_continuation(HWP, true);
 }
+
+/// 저장 왕복은 같은 셀의 전체 내용과 쪽별 소유, 뒤 본문 소속을 보존한다.
+#[derive(Debug, PartialEq)]
+struct SavedCellOwnership {
+    pages: u32,
+    fragments: Vec<(u32, String)>,
+    following_pages: Vec<u32>,
+}
+
+fn compact_text(value: &str) -> String {
+    value.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn source_cell(core: &DocumentCore, paragraph: usize, row: u16) -> (usize, usize) {
+    core.document().sections[0].paragraphs[paragraph]
+        .controls
+        .iter()
+        .enumerate()
+        .find_map(|(control, item)| match item {
+            rhwp::model::control::Control::Table(table) => table
+                .cells
+                .iter()
+                .position(|cell| cell.row == row && cell.col == 1)
+                .map(|cell| (control, cell)),
+            _ => None,
+        })
+        .expect("원문 긴 셀의 논리 소유")
+}
+
+fn saved_cell_ownership(core: &DocumentCore, paragraph: usize, row: u16) -> SavedCellOwnership {
+    let (control, cell) = source_cell(core, paragraph, row);
+    let rhwp::model::control::Control::Table(table) =
+        &core.document().sections[0].paragraphs[paragraph].controls[control]
+    else {
+        unreachable!("원문 소유 컨트롤은 표여야 한다")
+    };
+    let expected: String = table.cells[cell]
+        .paragraphs
+        .iter()
+        .map(|p| compact_text(&p.text))
+        .collect();
+    let following = compact_text(&core.document().sections[0].paragraphs[paragraph + 1].text);
+    assert!(
+        !following.is_empty(),
+        "표 뒤 본문의 비교 내용이 있어야 한다"
+    );
+    let mut ownership = SavedCellOwnership {
+        pages: core.page_count(),
+        fragments: Vec::new(),
+        following_pages: Vec::new(),
+    };
+    for page in 0..core.page_count() {
+        let root: Value = serde_json::from_str(
+            &core
+                .build_page_render_tree(page)
+                .expect("쪽 트리 생성")
+                .root
+                .to_json(),
+        )
+        .expect("쪽 트리 JSON");
+        for table in descendants(&root, "Table")
+            .into_iter()
+            .filter(|t| t["pi"] == paragraph)
+        {
+            let cells: Vec<_> = descendants(table, "Cell")
+                .into_iter()
+                .filter(|c| c["row"] == row && c["col"] == 1)
+                .collect();
+            assert!(
+                cells.len() <= 1,
+                "한 표 조각에 같은 셀을 중복 배치하면 안 된다"
+            );
+            for cell in cells {
+                ownership.fragments.push((page, compact_text(&text(cell))));
+            }
+        }
+        let page_text = compact_text(&text(&root));
+        if page + 1 == core.page_count() {
+            assert!(
+                !page_text.is_empty(),
+                "텍스트 원본의 마지막 유효 페이지에 실제 내용이 남아야 한다"
+            );
+        }
+        if page_text.contains(&following) {
+            ownership.following_pages.push(page);
+        }
+    }
+    let complete: String = ownership
+        .fragments
+        .iter()
+        .map(|(_, content)| content.as_str())
+        .collect();
+    assert_eq!(
+        complete, expected,
+        "셀 전체 내용은 원문 순서대로 한 번씩 보존되어야 한다"
+    );
+    let last = ownership.fragments.last().expect("긴 셀의 마지막 조각").0;
+    assert!(
+        ownership.following_pages.iter().any(|&page| page >= last),
+        "마지막 표 조각 뒤에 후속 본문이 남아야 한다"
+    );
+    ownership
+}
+
+fn caller_environment(core: &mut DocumentCore) {
+    core.set_font_environment(Some(
+        FontEnvironment::from_json(ENVIRONMENT).expect("검증된 호출자 글꼴 환경"),
+    ))
+    .expect("호출자 글꼴 환경 선택");
+}
+
+/// HWPX 계보의 HWP를 HWPX로 저장해도 독립 PDF의 7쪽 소유를 유지한다.
+#[test]
+fn hwpx_origin_hwp_preserves_ownership_through_hwpx_export() {
+    let mut core = DocumentCore::from_bytes(HWP).expect("HWPX 계보 HWP 열기");
+    caller_environment(&mut core);
+    let live = saved_cell_ownership(&core, 0, 0);
+    assert_eq!(live.pages, 7, "독립 PDF의 전체 7쪽");
+    let bytes = core.export_hwpx_native().expect("HWPX 공개 저장");
+    check_continuation(&bytes, false);
+    let mut reopened = DocumentCore::from_bytes(&bytes).expect("저장한 HWPX 다시 열기");
+    caller_environment(&mut reopened);
+    assert!(
+        reopened.document().layout_profile().hwpx_stored_layout(),
+        "HWPX 원본 계보는 HWP5 저장 프레임 계약으로 바뀌면 안 된다"
+    );
+    assert_eq!(
+        saved_cell_ownership(&reopened, 0, 0),
+        live,
+        "변환 전후의 전체 셀 내용과 쪽별 소유 및 후속 본문 소속"
+    );
+}
+
+/// 편집한 HWPX 계보의 HWP도 두 공개 저장 형식에서 같은 조각을 소유한다.
+#[test]
+fn edited_hwpx_origin_hwp_preserves_ownership_through_both_exports() {
+    let mut core = DocumentCore::from_bytes(HWP).expect("HWPX 계보 HWP 열기");
+    caller_environment(&mut core);
+    let (control, cell) = source_cell(&core, 0, 0);
+    core.insert_text_in_cell_native(
+        0,
+        0,
+        control,
+        cell,
+        0,
+        0,
+        &"수정된 검증 문장입니다. ".repeat(30),
+    )
+    .expect("긴 셀 공개 편집");
+    let live = saved_cell_ownership(&core, 0, 0);
+    for bytes in [
+        core.export_hwp_with_adapter().expect("HWP 공개 저장"),
+        core.export_hwpx_native().expect("HWPX 공개 저장"),
+    ] {
+        let mut reopened = DocumentCore::from_bytes(&bytes).expect("저장본 다시 열기");
+        caller_environment(&mut reopened);
+        assert_eq!(
+            saved_cell_ownership(&reopened, 0, 0),
+            live,
+            "편집한 긴 셀의 전체 내용과 정확한 조각 순서 및 뒤 본문 소속"
+        );
+    }
+}
+
+/// 실제 native HWP5의 현재 생성 줄은 편집 세션과 저장 재열기에서 같은 컷을 쓴다.
+/// 내용 불변 교체와 성장 편집을 구분하며 설치 글꼴이나 픽셀 좌표를 요구하지 않는다.
+#[test]
+fn native_generated_cell_preserves_current_ownership_after_edit_save_reopen() {
+    let bytes =
+        include_bytes!("../../samples/issue6776/78494-virtual-convergence-industry-decree.hwpx");
+    for growth in [false, true] {
+        let mut core = DocumentCore::from_bytes(bytes).expect("실제 native HWP5 원본 열기");
+        assert!(
+            core.document().layout_profile().native_hwp5_layout(),
+            "확장자와 별개로 실제 입력은 native HWP5여야 한다"
+        );
+        let original = (!growth).then(|| saved_cell_ownership(&core, 229, 1));
+        let (control, cell) = source_cell(&core, 229, 1);
+        if growth {
+            core.insert_text_in_cell_native(
+                0,
+                229,
+                control,
+                cell,
+                0,
+                0,
+                &"수정된 검증 문장입니다. ".repeat(30),
+            )
+            .expect("실제 셀의 공개 성장 편집");
+        } else {
+            core.replace_text_in_cell_native_deferred_pagination(
+                0, 229, control, cell, 0, 0, 1, "제",
+            )
+            .expect("같은 첫 글자로 공개 교체");
+            core.flush_deferred_pagination();
+        }
+        let live = saved_cell_ownership(&core, 229, 1);
+        if let Some(original) = original {
+            assert_eq!(
+                live, original,
+                "내용 불변 편집은 원본 쪽 소유를 바꾸면 안 된다"
+            );
+        }
+        for bytes in [
+            core.export_hwp_with_adapter().expect("HWP 공개 저장"),
+            core.export_hwpx_native().expect("HWPX 공개 저장"),
+        ] {
+            let reopened = DocumentCore::from_bytes(&bytes).expect("편집 저장본 다시 열기");
+            assert_eq!(
+                saved_cell_ownership(&reopened, 229, 1),
+                live,
+                "native 생성 셀의 전체 내용과 정확한 쪽별 조각 및 후속 본문 소속"
+            );
+        }
+    }
+}

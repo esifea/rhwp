@@ -7,8 +7,10 @@ const SAMPLE: &str = "samples/hwpx/opengov/36385445_결재문서본문_화재발
 
 fn open() -> DocumentCore {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(SAMPLE);
-    DocumentCore::from_bytes(&std::fs::read(path).expect("독립 PDF 대응 원본"))
-        .expect("원본 문서 열기")
+    let mut core = DocumentCore::from_bytes(&std::fs::read(path).expect("독립 PDF 대응 원본"))
+        .expect("원본 문서 열기");
+    core.set_hangul2024_compat(true);
+    core
 }
 
 fn number_runs<'a>(node: &'a RenderNode, out: &mut Vec<&'a TextRunNode>) {

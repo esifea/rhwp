@@ -153,7 +153,9 @@ fn check(core: &DocumentCore) {
     assert_eq!(host.char_offsets, [0, 1, 2, 3, 4, 5, 14, 15]);
     assert_eq!(host.line_segs.len(), 2, "prefix and control source rows");
     assert_eq!(host.line_segs[0].text_start, 0);
-    assert_eq!(host.line_segs[1].text_start, 14, "source control boundary");
+    // The raw 8-unit control starts after six spaces; offset 14 belongs to
+    // the first following space, beyond the control slot.
+    assert_eq!(host.line_segs[1].text_start, 6, "source control boundary");
 
     for row in &host.line_segs {
         assert_eq!(row.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY, 0);

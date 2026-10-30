@@ -261,8 +261,8 @@ fn object_separators_stay_with_the_first_table_when_the_second_wraps() {
         };
         assert_eq!(
             (owner.section_index, owner.para_index, owner.char_start),
-            (Some(index), Some(1), Some(0)),
-            "원문 두 공백의 정확한 소유"
+            (Some(index), Some(1), Some(1)),
+            "첫 글자처럼 표의 논리 한 칸 다음에 오는 원문 두 공백의 소유"
         );
         assert!(separator.bbox.width > 0.0, "표 사이 원문 공백의 실제 전진");
         close(

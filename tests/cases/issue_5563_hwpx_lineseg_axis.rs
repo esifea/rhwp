@@ -50,16 +50,35 @@ fn section_xml(line_segs: Vec<LineSeg>) -> String {
     String::from_utf8(bytes).expect("UTF-8 section XML")
 }
 
+fn emitted_prefix_and_positions(xml: &str) -> (u32, Vec<u32>) {
+    let parsed = roxmltree::Document::parse(xml).expect("section XML 파싱");
+    let para = parsed.descendants().find(|n| n.has_tag_name("p")).unwrap();
+    let first_run = para.children().find(|n| n.has_tag_name("run")).unwrap();
+    let prefix: Vec<_> = first_run
+        .descendants()
+        .filter(|n| n.has_tag_name("secPr") || n.has_tag_name("colPr"))
+        .map(|n| n.tag_name().name())
+        .collect();
+    assert_eq!(prefix, ["secPr", "colPr"], "정의 둘이 본문 앞에 방출된다");
+    let positions = para
+        .descendants()
+        .filter(|n| n.has_tag_name("lineseg"))
+        .map(|n| n.attribute("textpos").unwrap().parse().unwrap())
+        .collect();
+    // 새로 방출한 정의는 각각 8유닛이며, 원본 첫 줄 0은 그대로 둔다.
+    (prefix.len() as u32 * 8, positions)
+}
+
 /// 계약 1 — 범위 밖 줄부터 잘라 내고 그 앞 접두부만 남는다.
 #[test]
 fn line_segs_beyond_paragraph_axis_are_dropped() {
     let xml = section_xml(vec![seg(0), seg(2), seg(99)]);
+    let (prefix_units, positions) = emitted_prefix_and_positions(&xml);
 
-    assert!(xml.contains(r#"textpos="0""#), "첫 줄은 남아야 함: {xml}");
-    assert!(xml.contains(r#"textpos="2""#), "범위 안 줄은 남아야 함");
-    assert!(
-        !xml.contains(r#"textpos="99""#),
-        "문단 축(4)을 넘는 줄은 저장되면 안 됨"
+    assert_eq!(
+        positions,
+        vec![0, prefix_units + 2],
+        "유효 접두부만 남기고 원본 축(4)을 넘는 99는 보강 축에서도 버린다"
     );
 }
 
@@ -67,8 +86,13 @@ fn line_segs_beyond_paragraph_axis_are_dropped() {
 #[test]
 fn line_seg_at_exact_axis_end_is_kept() {
     let xml = section_xml(vec![seg(0), seg(4)]);
+    let (prefix_units, positions) = emitted_prefix_and_positions(&xml);
 
-    assert!(xml.contains(r#"textpos="4""#), "끝을 가리키는 줄은 정상값");
+    assert_eq!(
+        positions,
+        vec![0, prefix_units + 4],
+        "정의 슬롯과 원본 char_count(4)를 합한 정확한 끝 경계도 남긴다"
+    );
 }
 
 /// 계약 3 — 첫 줄부터 범위 밖이면 `linesegarray` 를 통째로 생략한다(한글이 스스로 조판).

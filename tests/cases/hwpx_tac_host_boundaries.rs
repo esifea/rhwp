@@ -48,6 +48,7 @@ fn paragraph(value: &str, cached: bool) -> Paragraph {
                 baseline_distance: 850,
                 line_spacing: 600,
                 segment_width: BODY_WIDTH as i32,
+                tag: LineSeg::TAG_SINGLE_SEGMENT_LINE,
                 ..Default::default()
             }]
         } else {
@@ -1001,11 +1002,29 @@ fn atomic_grown_frame_geometry(width: u32, classify_nonink_spaces: bool) {
     }
     grown.rebuild_grid();
     single_host(&mut source, grown);
-    let before = &mut source.sections[0].paragraphs[0].line_segs[0];
-    before.line_height = 15000;
-    before.text_height = 15000;
-    before.baseline_distance = 12750;
+    source
+        .doc_info
+        .para_shapes
+        .push(rhwp::model::style::ParaShape {
+            line_spacing_type: rhwp::model::style::LineSpacingType::Fixed,
+            line_spacing: 30000,
+            ..Default::default()
+        });
+    let before = &mut source.sections[0].paragraphs[0];
+    before.para_shape_id = 1;
+    before.line_segs[0].line_spacing = 14000;
     let original = open(&source);
+    let before = &original.document().sections[0].paragraphs[0];
+    assert_eq!(
+        original.document().doc_info.para_shapes[before.para_shape_id as usize].line_spacing,
+        30000,
+        "고정 줄간격은 두 배 스케일의 공통 IR 값을 보존한다"
+    );
+    assert_eq!(
+        before.line_segs[0].line_height + before.line_segs[0].line_spacing,
+        15000,
+        "원본 캐시 검증 뒤에도 선행 본문은 200px를 소비한다"
+    );
     for core in [&original, &reopen(&original)] {
         let (tables, runs) = final_objects(core);
         assert_eq!(tables.len(), 1, "None keeps one complete table frame");
@@ -1329,5 +1348,448 @@ fn cell_derived_atomic_width_includes_column_spacing_in_final_frame() {
             tail.2 >= second.2 + second.4 - EPS,
             "following clears derived-width row flow"
         );
+    }
+}
+
+fn spaced_border_fixture(border_fill_id: u16) -> Document {
+    let mut source = fixture([20000, 25000], [7200, 4500], ["", "  ", ""], 60000);
+    let Control::Table(table) = &mut source.sections[0].paragraphs[1].controls[0] else {
+        panic!("간격이 있는 표의 소유 컨트롤")
+    };
+    table.col_count = 2;
+    table.cell_spacing = 300;
+    table.cells[0].width = 10000;
+    table.cells[0].border_fill_id = border_fill_id;
+    let mut second = table.cells[0].clone();
+    second.col = 1;
+    second.paragraphs = vec![paragraph("SpacedRightMarker", true)];
+    table.cells.push(second);
+    table.rebuild_grid();
+    source
+}
+
+fn border_nodes(node: &RenderNode) -> Vec<&RenderNode> {
+    let mut nodes = Vec::new();
+    if matches!(node.node_type, RenderNodeType::Line(_)) {
+        nodes.push(node);
+    }
+    for child in &node.children {
+        nodes.extend(border_nodes(child));
+    }
+    nodes
+}
+
+fn spaced_border_table(page: &RenderNode, border_fill_id: u16) -> &RenderNode {
+    fn find(node: &RenderNode) -> Option<&RenderNode> {
+        if matches!(node.node_type, RenderNodeType::Table(_))
+            && rendered_text(node).contains("SpacedRightMarker")
+        {
+            return Some(node);
+        }
+        node.children.iter().find_map(find)
+    }
+    let table = find(page).expect("간격이 있는 표가 자기 표식을 유지한다");
+    let cells = table
+        .children
+        .iter()
+        .filter(|node| matches!(node.node_type, RenderNodeType::TableCell(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(cells.len(), 2, "두 실제 셀이 각자의 소유 관계를 유지한다");
+    assert_eq!(rendered_text(cells[0]), LABELS[0]);
+    assert_eq!(rendered_text(cells[1]), "SpacedRightMarker");
+    assert!(
+        cells[0].bbox.x + cells[0].bbox.width < cells[1].bbox.x,
+        "분리된 셀 상자 사이에 양의 간격이 있다"
+    );
+    for cell in cells {
+        let RenderNodeType::TableCell(owner) = &cell.node_type else {
+            unreachable!()
+        };
+        assert_eq!(
+            owner.border_fill_id, border_fill_id,
+            "가져오기가 참조를 보존한다"
+        );
+        assert!(
+            cell.bbox.x > table.bbox.x
+                && cell.bbox.y > table.bbox.y
+                && cell.bbox.x + cell.bbox.width < table.bbox.x + table.bbox.width
+                && cell.bbox.y + cell.bbox.height < table.bbox.y + table.bbox.height,
+            "셀 상자가 네 방향 외곽 간격 안에 머문다"
+        );
+    }
+    table
+}
+
+/// 관계형 합성 검사. 2026-10-29, 96 DPI로 측정한 원본 8쪽 표 간격 입력은
+/// `borderFillIDRef=0`이고 테두리 정의가 없으며, 한컴과 upstream 반영 전 출력 모두 셀 변이 없다.
+/// Native 회귀의 2~8쪽에서는 불필요한 선 8/16/12개를 관측했다. 수정 후 최종 측정은 대기 중이다.
+///
+/// 누락 스타일과 유효한 `Solid`/`None`, zone, 편집 가이드의 관계를 대조한다.
+#[test]
+fn spaced_cells_with_zero_or_unresolved_style_have_no_printable_edges() {
+    use rhwp::paint::RenderProfile;
+    for border_fill_id in [0, 99] {
+        let core = open(&spaced_border_fixture(border_fill_id));
+        let page = core.build_page_render_tree(0).expect("최종 렌더 트리");
+        let table = spaced_border_table(&page.root, border_fill_id);
+        assert!(
+            border_nodes(table).is_empty(),
+            "누락된 스타일이 자체 테두리를 추가하지 않는다"
+        );
+        let svg = core
+            .render_page_svg_layer_with_profile_native(0, RenderProfile::Print)
+            .expect("공개 API의 인쇄 SVG");
+        assert!(
+            !svg.contains("<line "),
+            "인쇄 내보내기에 의도하지 않은 테두리가 없다"
+        );
+    }
+}
+
+#[test]
+fn spaced_cells_keep_defined_solid_edges_and_explicit_none() {
+    use rhwp::model::style::{BorderFill, BorderLine, BorderLineType};
+    const COLOR: u32 = 0x123456;
+    for (line_type, expected_edges) in [(BorderLineType::Solid, 8), (BorderLineType::None, 0)] {
+        let mut source = spaced_border_fixture(1);
+        source.doc_info.border_fills = vec![BorderFill {
+            borders: [BorderLine {
+                line_type,
+                width: 3,
+                color: COLOR,
+            }; 4],
+            ..Default::default()
+        }];
+        let core = open(&source);
+        let page = core.build_page_render_tree(0).expect("최종 렌더 트리");
+        let table = spaced_border_table(&page.root, 1);
+        let lines = border_nodes(table);
+        assert_eq!(
+            lines.len(),
+            expected_edges,
+            "실제 셀마다 지정된 네 변을 유지한다"
+        );
+        for cell in table
+            .children
+            .iter()
+            .filter(|node| matches!(node.node_type, RenderNodeType::TableCell(_)))
+        {
+            let (x, y, w, h) = (cell.bbox.x, cell.bbox.y, cell.bbox.width, cell.bbox.height);
+            for (x1, y1, x2, y2) in [
+                (x, y, x, y + h),
+                (x + w, y, x + w, y + h),
+                (x, y, x + w, y),
+                (x, y + h, x + w, y + h),
+            ] {
+                let found = lines.iter().any(|node| {
+                    matches!(&node.node_type,
+                    RenderNodeType::Line(line) if !node.editor_only && line.style.color == COLOR
+                        && (line.x1 - x1).abs() < 0.001 && (line.y1 - y1).abs() < 0.001
+                        && (line.x2 - x2).abs() < 0.001 && (line.y2 - y2).abs() < 0.001)
+                });
+                assert_eq!(found, expected_edges > 0, "테두리가 최종 셀의 변을 따른다");
+            }
+        }
+    }
+}
+
+#[test]
+fn spaced_cellzone_keeps_defined_top_edges_above_missing_base_style() {
+    use rhwp::model::style::{BorderFill, BorderLine, BorderLineType};
+    use rhwp::model::table::TableZone;
+    const COLOR: u32 = 0x654321;
+    for border_fill_id in [0, 99] {
+        let mut source = spaced_border_fixture(border_fill_id);
+        let none = BorderLine {
+            line_type: BorderLineType::None,
+            ..Default::default()
+        };
+        source.doc_info.border_fills = vec![BorderFill {
+            borders: [
+                none,
+                none,
+                BorderLine {
+                    line_type: BorderLineType::Solid,
+                    width: 3,
+                    color: COLOR,
+                },
+                none,
+            ],
+            ..Default::default()
+        }];
+        let Control::Table(table) = &mut source.sections[0].paragraphs[1].controls[0] else {
+            panic!("간격이 있는 표의 소유 컨트롤")
+        };
+        table.zones.push(TableZone {
+            start_col: 0,
+            start_row: 0,
+            end_col: 1,
+            end_row: 0,
+            border_fill_id: 1,
+        });
+        let core = open(&source);
+        let page = core.build_page_render_tree(0).expect("최종 렌더 트리");
+        let table = spaced_border_table(&page.root, border_fill_id);
+        let lines = border_nodes(table);
+        assert_eq!(lines.len(), 2, "zone이 정의된 두 위쪽 변만 제공한다");
+        for cell in table
+            .children
+            .iter()
+            .filter(|node| matches!(node.node_type, RenderNodeType::TableCell(_)))
+        {
+            assert!(
+                lines.iter().any(|node| matches!(&node.node_type,
+                RenderNodeType::Line(line) if !node.editor_only && line.style.color == COLOR
+                    && (line.x1 - cell.bbox.x).abs() < 0.001
+                    && (line.x2 - cell.bbox.x - cell.bbox.width).abs() < 0.001
+                    && (line.y1 - cell.bbox.y).abs() < 0.001
+                    && (line.y2 - cell.bbox.y).abs() < 0.001)),
+                "zone 테두리가 분리된 각 셀의 위쪽 변을 따른다"
+            );
+        }
+    }
+}
+
+#[test]
+fn spaced_missing_style_guides_remain_editor_only_in_print_export() {
+    use rhwp::paint::RenderProfile;
+    use rhwp::wasm_api::HwpDocument;
+    let bytes = rhwp::serializer::serialize_hwpx(&spaced_border_fixture(0)).expect("직렬화");
+    let mut core = HwpDocument::from_bytes(&bytes).expect("공개 API로 가져오기");
+    core.set_show_transparent_borders(true);
+    let page = core.build_page_render_tree(0).expect("최종 편집기 트리");
+    let table = spaced_border_table(&page.root, 0);
+    let lines = border_nodes(table);
+    assert_eq!(lines.len(), 8, "분리된 셀마다 가이드 네 변을 유지한다");
+    assert!(
+        lines.iter().all(|node| node.editor_only),
+        "가이드는 인쇄하지 않는다"
+    );
+    let screen = core
+        .render_page_svg_layer_with_profile_native(0, RenderProfile::Screen)
+        .expect("화면 SVG");
+    let print = core
+        .render_page_svg_layer_with_profile_native(0, RenderProfile::Print)
+        .expect("인쇄 SVG");
+    assert!(
+        screen.contains("<line "),
+        "화면 내보내기가 표시된 가이드를 유지한다"
+    );
+    assert!(
+        !print.contains("<line "),
+        "인쇄 내보내기가 편집 가이드를 모두 제외한다"
+    );
+}
+
+/// Relational synthetic check, 2026-10-29: 96-DPI render-tree boxes and authored
+/// caption font sizes. No installed font metrics or raster reference are used.
+#[test]
+fn atomic_empty_caption_style_survives_initial_load_and_export_geometry() {
+    use rhwp::model::shape::{Caption, CaptionDirection};
+    for direction in [CaptionDirection::Top, CaptionDirection::Bottom] {
+        for font_height in [200, 2000] {
+            let mut source = fixture([BODY_WIDTH; 2], [7200; 2], ["", "", ""], 60000);
+            source
+                .doc_info
+                .char_shapes
+                .push(rhwp::model::style::CharShape {
+                    base_size: font_height,
+                    ..Default::default()
+                });
+            let mut empty = paragraph("", false);
+            empty.char_shapes[0].char_shape_id = 1;
+            let mut object = table(0, 40000, 7200);
+            object.cells[0].paragraphs = vec![paragraph("한글 캡션 경계", true)];
+            object.caption = Some(Caption {
+                direction,
+                spacing: 600,
+                paragraphs: vec![empty],
+                ..Default::default()
+            });
+            single_host(&mut source, object);
+            let original = open(&source);
+            let Control::Table(loaded) = &original.document().sections[0].paragraphs[1].controls[0]
+            else {
+                panic!("caption table owner")
+            };
+            let caption_lines = &loaded.caption.as_ref().unwrap().paragraphs[0].line_segs;
+            assert!(
+                !caption_lines.is_empty(),
+                "initial load composes the missing caption row"
+            );
+            assert_eq!(caption_lines[0].line_height, font_height);
+            // Build an independent input with those authored caption line metrics.
+            // Its host still has no rows, so both inputs take the real load path.
+            let Control::Table(authored) = &mut source.sections[0].paragraphs[1].controls[0] else {
+                unreachable!()
+            };
+            authored.caption.as_mut().unwrap().paragraphs[0].line_segs = vec![LineSeg {
+                line_height: font_height,
+                text_height: font_height,
+                baseline_distance: font_height * 85 / 100,
+                segment_width: 40000,
+                ..Default::default()
+            }];
+            let reference = open(&source);
+            let reference_host = &reference.document().sections[0].paragraphs[1];
+            assert_eq!(
+                original.document().sections[0].paragraphs[1].line_segs[0].line_height,
+                reference_host.line_segs[0].line_height,
+                "missing-caption timing preserves authored occupied height: {direction:?}, {font_height}"
+            );
+            let exported = reopen(&original);
+            for core in [&original, &exported] {
+                let (tables, runs) = final_objects(core);
+                assert_eq!(tables.len(), 1);
+                let frame = tables[0].1;
+                let tail = runs
+                    .iter()
+                    .find(|(text, _)| text.contains(AFTER))
+                    .unwrap()
+                    .1;
+                // The authored caption row owns its physical height even when
+                // its text is empty and produces no visible glyph run.
+                let caption_height = px(font_height as u32);
+                let bottom = frame.2
+                    + frame.4
+                    + if direction == CaptionDirection::Bottom {
+                        px(600) + caption_height
+                    } else {
+                        0.0
+                    };
+                assert!(tail.0 > frame.0 || (tail.0 == frame.0 && tail.2 >= bottom - EPS),
+                    "following clears the painted caption frame: {direction:?}, {font_height}, {frame:?}, {tail:?}");
+                let (reference_tables, reference_runs) = final_objects(&reference);
+                let reference_tail = reference_runs
+                    .iter()
+                    .find(|(text, _)| text.contains(AFTER))
+                    .unwrap()
+                    .1;
+                assert!(
+                    (frame.2 - reference_tables[0].1 .2).abs() < EPS,
+                    "load and export retain caption/table origin: {direction:?}, {font_height}"
+                );
+                assert!((tail.2 - reference_tail.2).abs() < EPS,
+                    "load and export retain following occupied origin: {direction:?}, {font_height}");
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "pdf-import")]
+fn bounded_editor_reopen_rejects_unaccounted_atomic_hosts_and_seals_session() {
+    use rhwp::{parser::pdf::PdfImportPolicy, PdfImportSession};
+    let text_host = fixture([10000; 2], [7200; 2], ["한글", " 경계 ", "끝"], 60000);
+    let mut empty_host = text_host.clone();
+    let host = &mut empty_host.sections[0].paragraphs[1];
+    host.text.clear();
+    host.char_offsets.clear();
+    host.char_count = 17;
+    // This host fails the nonempty-text composer gate and exercises the planner gate.
+    let mut nested_host = text_host.clone();
+    let mut parent = table(0, 30000, 24000);
+    parent.common.treat_as_char = false;
+    parent.cells[0].paragraphs = vec![text_host.sections[0].paragraphs[1].clone()];
+    single_host(&mut nested_host, parent);
+    for source in [text_host, empty_host, nested_host] {
+        let bytes = rhwp::serializer::serialize_hwpx(&source).unwrap();
+        // The ordinary document API retains the independent native geometry path.
+        let ordinary = open(&source);
+        assert!(!final_objects(&ordinary).0.is_empty());
+        let mut request = PdfImportSession::new(PdfImportPolicy::default()).unwrap();
+        let error = request
+            .reopen_hwpx_export(&bytes, 1024 * 1024)
+            .err()
+            .expect("generated-editor boundary must reject unsupported atomic geometry")
+            .to_string();
+        assert!(
+            error.contains("PDF_EDITOR_REOPEN: unsupported atomic table host"),
+            "{error}"
+        );
+        assert!(
+            !error.contains("PDF_RESOURCE_LIMIT:"),
+            "unsupported geometry is not budget exhaustion"
+        );
+        assert!(request.resource_usage().failure.is_none());
+        let used = request.resource_usage().decoded_bytes;
+        assert!(request.reopen_hwpx_export(&bytes, 1024 * 1024).is_err());
+        assert_eq!(request.resource_usage().decoded_bytes, used);
+        let mut policy = PdfImportPolicy::default();
+        policy.backend.decoded_bytes = bytes.len();
+        let mut limited = PdfImportSession::new(policy).unwrap();
+        let error = limited
+            .reopen_hwpx_export(&bytes, 1024 * 1024)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("PDF_RESOURCE_LIMIT:"), "{error}");
+        assert!(limited.resource_usage().failure.is_some());
+        assert!(limited.resource_usage().decoded_bytes <= policy.backend.decoded_bytes);
+    }
+}
+
+#[test]
+#[cfg(feature = "pdf-import")]
+fn bounded_editor_reopen_keeps_empty_stored_nested_tac_hosts() {
+    use rhwp::{parser::pdf::PdfImportPolicy, PdfImportSession};
+    let mut source = fixture([20000; 2], [12000; 2], ["", "", ""], 60000);
+    let mut parent = table(0, 20000, 12000);
+    parent.common.treat_as_char = false;
+    let child = table(0, 10000, 7200);
+    let mut host = paragraph("", true);
+    host.char_count += 8;
+    host.line_segs[0].line_height = 7200;
+    host.line_segs[0].text_height = 7200;
+    host.line_segs[0].baseline_distance = 6120;
+    host.controls = vec![Control::Table(Box::new(child))];
+    parent.cells[0].paragraphs = vec![host];
+    single_host(&mut source, parent);
+    let bytes = rhwp::serializer::serialize_hwpx(&source).unwrap();
+    let mut request = PdfImportSession::new(PdfImportPolicy::default()).unwrap();
+    let core = request.reopen_hwpx_export(&bytes, 1024 * 1024).unwrap();
+    let Control::Table(parent) = &core.document().sections[0].paragraphs[1].controls[0] else {
+        panic!("parent")
+    };
+    let host = &parent.cells[0].paragraphs[0];
+    assert!(host.text.is_empty());
+    assert!(!host.line_segs.is_empty());
+    assert!(host
+        .line_segs
+        .iter()
+        .all(|line| line.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0));
+    assert!(matches!(&host.controls[0], Control::Table(child) if child.common.treat_as_char));
+    assert!(!core.export_hwpx_native().unwrap().is_empty());
+    assert!(!core
+        .build_page_render_tree(0)
+        .unwrap()
+        .root
+        .children
+        .is_empty());
+}
+
+#[test]
+#[cfg(feature = "pdf-import")]
+fn bounded_editor_reopen_keeps_actual_generated_pdf_handoffs() {
+    use rhwp::{parser::pdf::PdfImportPolicy, PdfImportSession};
+    for pdf in [
+        include_bytes!("../../pdf/issue8174/fonts/cff-cid.pdf").as_slice(),
+        include_bytes!("../../pdf/issue7998/cell-nested.pdf").as_slice(),
+    ] {
+        let mut import = PdfImportSession::new(PdfImportPolicy::default()).unwrap();
+        let mut original = import.open(pdf, &Default::default()).unwrap();
+        let handoff = import.export_hwpx(&mut original, 1024 * 1024).unwrap();
+        let mut request = PdfImportSession::new(PdfImportPolicy::default()).unwrap();
+        let reopened = request.reopen_hwpx_export(&handoff, 1024 * 1024).unwrap();
+        assert_eq!(reopened.page_count(), original.page_count());
+        for page in 0..reopened.page_count() {
+            assert!(!reopened
+                .build_page_render_tree(page)
+                .unwrap()
+                .root
+                .children
+                .is_empty());
+        }
+        assert!(!reopened.export_hwpx_native().unwrap().is_empty());
     }
 }

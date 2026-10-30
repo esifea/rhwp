@@ -246,3 +246,189 @@ fn an_hwpx_source_keeps_its_own_axis() {
          깨진다. 실측 textpos={positions:?}"
     );
 }
+
+/// 새로 삽입한 구역·단 정의와 저장 줄은 같은 방출 문단 축을 쓴다.
+#[test]
+fn marker_free_inserted_definitions_preserve_saved_table_row_ownership() {
+    use rhwp::model::paragraph::CharShapeRef;
+
+    for (existing_definition, unsupported_control) in [
+        (None, false),
+        (Some(true), false),
+        (Some(false), false),
+        (None, true),
+    ] {
+        let mut controls = Vec::new();
+        match existing_definition {
+            Some(true) => controls.push(Control::SectionDef(Box::new(secdef()))),
+            Some(false) => controls.push(Control::ColumnDef(ColumnDef::default())),
+            None => {}
+        }
+        if unsupported_control {
+            // 미지원 슬롯의 원본 예산은 보존하고, 방출 축의 저장 줄은 생략한다.
+            controls.push(Control::Unknown(rhwp::model::control::UnknownControl {
+                ctrl_id: u32::from_be_bytes(*b"zzzz"),
+            }));
+        }
+        let text_start = controls.len() as u32 * 8 + 8;
+        let mut table = one_cell_table();
+        table.common.treat_as_char = true;
+        table.common.flow_with_text = true;
+        table.common.height = 5400;
+        controls.push(Control::Table(Box::new(table)));
+        let mut object_line = line_seg(0);
+        object_line.vertical_pos = 0;
+        object_line.line_height = 5400;
+        object_line.text_height = 5400;
+        object_line.baseline_distance = 5400;
+        object_line.line_spacing = 0;
+        let mut text_line = line_seg(text_start);
+        text_line.vertical_pos = 5400;
+        text_line.line_height = 1200;
+        text_line.text_height = 1200;
+        text_line.baseline_distance = 1000;
+        text_line.line_spacing = 0;
+        let host = Paragraph {
+            text: "AfterProbe".into(),
+            char_count: text_start + 11,
+            char_offsets: (text_start..text_start + 10).collect(),
+            char_shapes: vec![CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 0,
+            }],
+            controls,
+            line_segs: vec![object_line, text_line],
+            ..Default::default()
+        };
+        let mut source = Document::default();
+        source.doc_info.char_shapes = vec![CharShape::default()];
+        source.doc_info.para_shapes = vec![ParaShape::default()];
+        source.sections.push(Section {
+            section_def: secdef(),
+            paragraphs: vec![host],
+            ..Default::default()
+        });
+        let expected_starts = if unsupported_control {
+            Vec::new()
+        } else {
+            vec![0, 24]
+        };
+        assert_eq!(textpos_values(&section_xml(&source)), expected_starts);
+        assert_eq!(
+            source.sections[0].paragraphs[0].line_segs[1].text_start,
+            text_start
+        );
+        let bytes = rhwp::serializer::hwpx::serialize_hwpx(&source).expect("입력 직렬화");
+        let parsed = rhwp::parser::parse_document(&bytes).expect("방출한 입력 파싱");
+        let host = &parsed.sections[0].paragraphs[0];
+        let table_index = host
+            .controls
+            .iter()
+            .position(|c| matches!(c, Control::Table(_)))
+            .unwrap();
+        assert_eq!(host.controls.len(), 3, "방출된 정의 둘과 표 하나만 남는다");
+        assert!(matches!(host.controls[0], Control::SectionDef(_)));
+        assert!(matches!(host.controls[1], Control::ColumnDef(_)));
+        assert_eq!(table_index, 2);
+        // 본문 앞에 있는 secPr·colPr·표는 각각 8 UTF-16 유닛이다.
+        let table_slot = table_index as u32 * 8;
+        assert_eq!(table_slot, 16);
+        assert_eq!(host.char_offsets[0], 24);
+        assert_eq!(
+            host.hwpx_axis_shift, 0,
+            "마커가 없는 명시적 XML은 자기 슬롯을 센다"
+        );
+        assert_eq!(host.text, "AfterProbe", "미지원 슬롯 뒤 본문을 보존한다");
+        if unsupported_control {
+            assert!(
+                host.line_segs.is_empty(),
+                "불완전한 방출 축의 줄을 만들지 않는다"
+            );
+            assert_eq!(source.sections[0].paragraphs[0].char_count, text_start + 11);
+            assert_eq!(
+                source.sections[0].paragraphs[0].char_offsets,
+                (text_start..text_start + 10).collect::<Vec<_>>()
+            );
+        } else {
+            assert!(
+                table_slot < host.line_seg_text_start(1),
+                "표는 첫 줄 소유를 유지한다"
+            );
+            assert_eq!(host.line_seg_text_start(1), host.char_offsets[0]);
+        }
+        assert_eq!(
+            textpos_values(&section_xml(&parsed)),
+            expected_starts,
+            "재수출해도 줄 시작과 생략 여부는 바뀌지 않는다"
+        );
+    }
+}
+
+/// 템플릿이 옮기는 첫 정의만 남기며, 중복 단 정의는 인라인 방출을 유지한다.
+#[test]
+fn marker_free_duplicate_definitions_follow_emitted_slots() {
+    for (duplicate_column, separated) in [(false, false), (false, true), (true, false)] {
+        let definition = if duplicate_column {
+            Control::ColumnDef(ColumnDef::default())
+        } else {
+            Control::SectionDef(Box::new(secdef()))
+        };
+        let offsets: Vec<u32> = if separated {
+            std::iter::once(8).chain(25..34).collect()
+        } else {
+            (24..34).collect()
+        };
+        let source_start = offsets[usize::from(separated)];
+        let expected_start = if duplicate_column { 32 } else { source_start };
+        let host = Paragraph {
+            text: "AfterProbe".into(),
+            char_count: 35,
+            char_offsets: offsets.clone(),
+            controls: vec![
+                definition.clone(),
+                definition,
+                Control::Table(Box::new(one_cell_table())),
+            ],
+            line_segs: vec![line_seg(0), line_seg(source_start)],
+            ..Default::default()
+        };
+        let mut source = Document::default();
+        source.doc_info.char_shapes = vec![CharShape::default()];
+        source.doc_info.para_shapes = vec![ParaShape::default()];
+        source.sections.push(Section {
+            section_def: secdef(),
+            paragraphs: vec![host],
+            ..Default::default()
+        });
+        let bytes = rhwp::serializer::hwpx::serialize_hwpx(&source).expect("중복 정의 직렬화");
+        let parsed = rhwp::parser::parse_document(&bytes).expect("중복 정의 출력 파싱");
+        let host = &parsed.sections[0].paragraphs[0];
+        let xml = section_xml(&source);
+        assert_eq!(
+            xml.matches("<hp:secPr ").count(),
+            1,
+            "구역 템플릿은 하나만 방출한다"
+        );
+        assert_eq!(
+            xml.matches("<hp:colPr ").count(),
+            if duplicate_column { 2 } else { 1 }
+        );
+        assert_eq!(host.text, "AfterProbe");
+        assert_eq!(host.char_offsets[usize::from(separated)], expected_start);
+        assert_eq!(
+            textpos_values(&xml),
+            vec![0, expected_start],
+            "저장 줄은 실제 방출 슬롯만 센다"
+        );
+        assert_eq!(source.sections[0].paragraphs[0].char_offsets, offsets);
+        assert_eq!(
+            source.sections[0].paragraphs[0].line_segs[1].text_start,
+            source_start
+        );
+        assert_eq!(
+            textpos_values(&section_xml(&parsed)),
+            vec![0, expected_start],
+            "재수출해도 줄 축을 유지한다"
+        );
+    }
+}

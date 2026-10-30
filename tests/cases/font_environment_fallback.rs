@@ -127,7 +127,15 @@ fn fallback_rejects_empty_whitespace_css_lists_controls_and_oversize_faces() {
 
 #[test]
 fn missing_source_slot_selects_exact_hcr_metrics_and_preserves_source_exports() {
-    for bytes in [HWP, HWPX] {
+    for (bytes, implicit_fonts, implicit_width_source, implicit_space_source) in [
+        (HWP, json!([]), "heuristicHalfwidth", "heuristicHalfwidth"),
+        (
+            HWPX,
+            json!(["한컴바탕"]),
+            "embeddedMetric",
+            "metricHalfSpace",
+        ),
+    ] {
         let mut core = DocumentCore::from_bytes(bytes).expect("글꼴 슬롯 없는 원본 읽기");
         assert!(
             core.document()
@@ -139,19 +147,35 @@ fn missing_source_slot_selects_exact_hcr_metrics_and_preserves_source_exports() 
         );
         assert_eq!(
             fonts_used(&core),
-            json!([]),
-            "미선언 원문은 아직 선택한 face가 없어야 한다"
+            implicit_fonts,
+            "환경 선택 전에는 형식별 결측 글꼴 기본값을 보존해야 한다"
         );
         let original = exports(&core);
         let before = record(&core, "s");
         assert!(before["document"]["face"].is_null(), "원문 face 선언 없음");
         assert_eq!(
-            before["layoutMetric"]["widthSource"], "heuristicHalfwidth",
-            "선언 전에는 기존 휴리스틱"
+            before["layoutMetric"]["widthSource"], implicit_width_source,
+            "선택 전에는 HWP 휴리스틱과 HWPX 기본 글꼴 메트릭을 구분해야 한다"
         );
         assert_eq!(
             before["layoutMetric"]["baseAdvanceHwpunit"], 500,
-            "선언 전 반각 폭은 기존 500"
+            "선택 전 s 폭은 기존 반각 또는 기본 한컴바탕의 0.5em이다"
+        );
+        if bytes == HWPX {
+            // layoutName은 원본 IR을 조회하고, 기본 face는 표시용 조회 문맥에만 있다.
+            assert_eq!(
+                before["layoutMetric"]["requestedFace"], "한컴바탕",
+                "HWPX 결측 영문 슬롯은 표시용 기본 face의 메트릭을 선택해야 한다"
+            );
+        }
+        let space = record(&core, " ");
+        assert_eq!(
+            space["layoutMetric"]["widthSource"], implicit_space_source,
+            "선택 전 공백도 형식별 기본 측정 경로를 따라야 한다"
+        );
+        assert_eq!(
+            space["layoutMetric"]["baseAdvanceHwpunit"], 500,
+            "useFontSpace=0인 원문 공백은 기본 face와 무관하게 반각이다"
         );
         core.set_font_environment(Some(environment(Some("HCR Dotum"))))
             .expect("HCR fallback 선택");
@@ -201,7 +225,7 @@ fn missing_source_slot_selects_exact_hcr_metrics_and_preserves_source_exports() 
 
 #[test]
 fn same_id_fallback_changes_survive_snapshot_and_document_replacement() {
-    for bytes in [HWP, HWPX] {
+    for (bytes, implicit_fonts) in [(HWP, json!([])), (HWPX, json!(["한컴바탕"]))] {
         let mut core = DocumentCore::from_bytes(bytes).expect("원본 읽기");
         let document = core.document().clone();
         let snapshot = core.save_snapshot_native();
@@ -215,7 +239,7 @@ fn same_id_fallback_changes_survive_snapshot_and_document_replacement() {
                     .expect("같은 ID의 다른 fallback 선택"),
                 "A/B/None 전환은 재구성을 수행해야 한다"
             );
-            let expected_fonts = face.map_or_else(|| json!([]), |face| json!([face]));
+            let expected_fonts = face.map_or_else(|| implicit_fonts.clone(), |face| json!([face]));
             assert_eq!(
                 fonts_used(&core),
                 expected_fonts,
@@ -381,4 +405,116 @@ fn fallback_space_metric_obeys_the_use_font_space_flag() {
             );
         }
     }
+}
+
+// 결측 charPr는 표시만 복구하며 HWPX 저장의 미등록 참조 검증은 유지한다.
+fn implicit_default_exports(
+    core: &DocumentCore,
+    missing_char_table: bool,
+) -> (Vec<u8>, Result<Vec<u8>, String>) {
+    if !missing_char_table {
+        let (hwp, hwpx) = exports(core);
+        return (hwp, Ok(hwpx));
+    }
+    let hwp = core
+        .export_hwp_native()
+        .expect("결측 글자모양 원문의 HWP 내보내기");
+    let error = core
+        .export_hwpx_native()
+        .expect_err("결측 charPr 0번 참조의 HWPX 저장을 거절해야 한다");
+    let rhwp::HwpError::RenderError(message) = error else {
+        panic!("미등록 charPr 참조의 RenderError여야 한다: {error:?}");
+    };
+    assert_eq!(
+        message, "XML 쓰기 실패: 미등록 ID 참조 발견: charPrIDRef: [0]",
+        "결측 charPr 입력은 정확히 미등록 0번 글자모양 때문에 저장이 거절되어야 한다"
+    );
+    (hwp, Err(message))
+}
+
+// 공개 환경 선언의 공급 face가 브라우저 준비 목록에 있어야 하는 API 계약이다.
+// 합성 결측 입력의 선택·원문 보존만 검사하며 쪽 배치나 시각 일치를 고정하지 않는다.
+fn assert_implicit_default_prepares_environment_faces(missing_char_table: bool, source: &str) {
+    let mut core = DocumentCore::from_bytes(HWPX).expect("합성 HWPX 기반 읽기");
+    let mut document = core.document().clone();
+    for faces in &mut document.doc_info.font_faces {
+        faces.clear();
+    }
+    if missing_char_table {
+        document.doc_info.char_shapes.clear();
+    } else {
+        for shape in &mut document.doc_info.char_shapes {
+            shape.font_ids[1] = 0;
+        }
+    }
+    core.set_document(document.clone());
+    let original = implicit_default_exports(&core, missing_char_table);
+    for declaration in [
+        json!({"id":"implicit-substitution","substitutions":{(source):"HCR Dotum"}}),
+        json!({"id":"implicit-glyphs","substitutions":{},
+               "glyphFallbacks":{(source):["HCR Dotum"]}}),
+    ] {
+        assert!(declaration.get("fallbackFace").is_none());
+        core.set_font_environment(Some(
+            FontEnvironment::from_json(&declaration.to_string()).expect("기본 face 공급 선언"),
+        ))
+        .expect("명시적 fallback 없는 환경 선택");
+        assert!(
+            fonts_used(&core)
+                .as_array()
+                .expect("준비 글꼴 배열")
+                .iter()
+                .any(|face| face == "HCR Dotum"),
+            "선언한 기본 face 치환 또는 glyph 공급자를 브라우저가 준비해야 한다: {declaration}"
+        );
+        assert_eq!(
+            serde_json::to_value(&core.document().doc_info.font_faces).expect("원문 face JSON"),
+            serde_json::to_value(&document.doc_info.font_faces).expect("초기 face JSON"),
+            "투영한 기본 face를 원문 언어 슬롯에 기록하면 안 된다"
+        );
+        assert_eq!(
+            serde_json::to_value(&core.document().doc_info.char_shapes)
+                .expect("원문 글자모양 JSON"),
+            serde_json::to_value(&document.doc_info.char_shapes).expect("초기 글자모양 JSON"),
+            "복구한 글자모양을 원문 표에 기록하면 안 된다"
+        );
+        assert_eq!(
+            implicit_default_exports(&core, missing_char_table),
+            original,
+            "선택은 HWP 바이트와 HWPX 저장 성공 또는 명시적 거절 결과를 보존해야 한다"
+        );
+    }
+    if missing_char_table {
+        core.set_font_environment(Some(environment(Some("HCR Batang"))))
+            .expect("복구 기본값보다 명시적 fallback 우선 선택");
+        assert_eq!(
+            fonts_used(&core),
+            json!(["HCR Batang"]),
+            "명시적 fallback은 미사용 복구 기본값과 그 공급 체인을 대체해야 한다"
+        );
+        assert_eq!(
+            implicit_default_exports(&core, missing_char_table),
+            original,
+            "명시적 선택도 HWP 바이트와 같은 HWPX 미등록 참조 거절을 보존해야 한다"
+        );
+        assert!(
+            core.document().doc_info.char_shapes.is_empty(),
+            "명시적 fallback도 복구한 글자모양을 원문에 기록하면 안 된다"
+        );
+        assert_eq!(
+            serde_json::to_value(&core.document().doc_info.font_faces).expect("원문 face JSON"),
+            serde_json::to_value(&document.doc_info.font_faces).expect("초기 face JSON"),
+            "명시적 fallback도 원문 언어 슬롯을 보존해야 한다"
+        );
+    }
+}
+
+#[test]
+fn missing_char_table_prepares_selected_implicit_default_substitution_and_glyphs() {
+    assert_implicit_default_prepares_environment_faces(true, "굴림");
+}
+
+#[test]
+fn missing_latin_slot_prepares_selected_implicit_default_substitution_and_glyphs() {
+    assert_implicit_default_prepares_environment_faces(false, "한컴바탕");
 }

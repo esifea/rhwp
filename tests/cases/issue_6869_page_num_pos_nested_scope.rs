@@ -188,8 +188,8 @@ fn with_boundary(mut para: Paragraph, start: u32) -> Paragraph {
 
 #[test]
 fn collapsed_axes_are_local_to_parent_and_child_in_both_formats() {
-    // 부모: pgnp@0, table@8, pgnp@16, table@24 -> 마지막 표는16.
-    // 자식: pgnp@0, pgnp@8, table@16 -> 자식 표는8. 자식의 제거를 부모에 계상하지 않는다.
+    // 부모는 중복 쪽번호를 접은 뒤 secPr/colPr 두 슬롯을 앞에 보강한다.
+    // 자식에는 정의를 보강하지 않는다. 각 문단의 마지막 표 앞 슬롯만 센다.
     let child = with_boundary(
         paragraph(vec![page_num(), page_num(), table(plain_child())]),
         16,
@@ -204,10 +204,43 @@ fn collapsed_axes_are_local_to_parent_and_child_in_both_formats() {
         24,
     );
     for format in [SourceFormat::Hwp5, SourceFormat::Hwpx] {
-        let values = owned_values(&section_xml(&document(vec![parent.clone()], format)));
+        let xml = section_xml(&document(vec![parent.clone()], format));
+        let parsed = roxmltree::Document::parse(&xml).expect("section XML 파싱");
+        let owned_slots: Vec<Vec<_>> = parsed
+            .descendants()
+            .filter(|n| n.has_tag_name("p"))
+            .map(|p| {
+                p.descendants()
+                    .filter(|n| n.ancestors().find(|a| a.has_tag_name("p")) == Some(p))
+                    .map(|n| n.tag_name().name())
+                    .filter(|name| matches!(*name, "secPr" | "colPr" | "pageNum" | "tbl"))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            owned_slots,
+            vec![
+                vec!["secPr", "colPr", "pageNum", "tbl", "tbl"],
+                vec!["pageNum", "tbl"],
+                vec![],
+                vec![],
+            ],
+            "정의 보강과 중복 제거는 소유 문단 안에서만 적용한다: {format:?}"
+        );
+        let last_table_start =
+            |slots: &[&str]| slots.iter().rposition(|name| *name == "tbl").unwrap() as u32 * 8;
+        let values = owned_values(&xml);
         assert_eq!(values.len(), 4);
-        assert_eq!(values[0], (1, vec![0, 16]), "부모 축: {format:?}");
-        assert_eq!(values[1], (1, vec![0, 8]), "자식 축: {format:?}");
+        assert_eq!(
+            values[0],
+            (1, vec![0, last_table_start(&owned_slots[0])]),
+            "부모 축은 실제 방출한 자기 슬롯만 센다: {format:?}"
+        );
+        assert_eq!(
+            values[1],
+            (1, vec![0, last_table_start(&owned_slots[1])]),
+            "자식 축은 부모 정의와 다른 문단의 제거 슬롯을 세지 않는다: {format:?}"
+        );
         assert_eq!(values[2].0, 0);
         assert_eq!(values[3].0, 0);
     }
