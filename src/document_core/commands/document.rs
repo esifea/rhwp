@@ -794,7 +794,11 @@ impl DocumentCore {
                 // 본문 NO_LS 텍스트 문단의 실폭 래핑은 composer recompose 가 담당한다.
                 let include_host_empty = include_empty
                     || (rebuild_lineage_hosts
-                        && crate::renderer::composer::supports_cache_free_tac_host(para));
+                        && (crate::renderer::composer::supports_cache_free_tac_host(para)
+                            || para
+                                .controls
+                                .iter()
+                                .all(crate::renderer::control_is_body_flow_neutral_marker)));
                 if Self::needs_line_seg_reflow_in_scope(para, include_host_empty, section_sized) {
                     let para_style = styles.para_styles.get(para.para_shape_id as usize);
                     // 본문: 열 상자를 그대로 넘긴다 — 렌더가 깎는 상자와 같아야 한다.
